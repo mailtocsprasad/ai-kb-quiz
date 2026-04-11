@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+
+# Environment & API keys
+.env
+*.env
+Claude-Key.txt
+
+# Vector index (regenerate locally)
+kb_index/
+
+# Session logs
+logs/
+
+# Local config (copy from config.example.yaml)
+config/config.yaml
+
+# OS
+.DS_Store
+Thumbs.db

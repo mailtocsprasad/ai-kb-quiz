@@ -1,0 +1,52 @@
+# ai-kb-quiz configuration
+# Copy this file to config.yaml and edit as needed.
+# config.yaml is gitignored — never commit API keys.
+
+# Model mode: "local", "premium", or "hybrid"
+mode: hybrid
+
+# Local model — must be available via Ollama (ollama pull <name>)
+# CPU-friendly options (no GPU required):
+#   phi4-mini        3.8B  — best reasoning/code on CPU (recommended)
+#   llama3.2:3b      3B    — solid general fallback
+#   gemma3:4b        4B    — strong document understanding
+#   qwen2.5-coder:7b 7B    — best for code-heavy topics (slower on CPU)
+local_model: phi4-mini
+
+# Premium model (Anthropic Claude)
+premium_model: claude-sonnet-4-6
+
+# API key resolution — tried in order, first match wins:
+#   1. ANTHROPIC_API_KEY environment variable
+#   2. api_key_file path below (gitignored, never committed)
+# To reuse the key from ai-kd, set: C:\Code\ai-kd\Claude-Key.txt
+api_key_file: Claude-Key.txt
+
+# Embedding model for KB vector index (local, CPU-friendly)
+embedding_model: all-MiniLM-L6-v2
+
+# Quiz settings
+quiz:
+  default_questions: 5     # used when --questions not provided
+  max_questions: 20        # hard cap regardless of CLI input
+  show_correct_answer: true
+  show_kb_excerpt: true
+
+# Retriever settings
+retriever:
+  top_k: 5                 # KB chunks returned per query
+  min_score: 0.25          # cosine similarity threshold (0.0–1.0)
+
+# PTC (Process-Then-Communicate) settings
+ptc:
+  max_output_tokens: 1000  # target max tokens in compressed output
+
+# Programmable Tool Calling settings
+prog_tool_calling:
+  sandbox_timeout_sec: 10  # max runtime for model-generated extraction scripts
+
+# Observability
+logging:
+  enabled: true
+  log_dir: logs/
+  log_compression_ratio: true
