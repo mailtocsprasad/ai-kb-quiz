@@ -6,7 +6,11 @@
 
 **Architecture:** Engine layer (retriever → PTC → router → model → scorer → log) is fully decoupled from CLI. All external dependencies (Ollama, Anthropic SDK, filesystem, Win32) injected via constructor arguments. TDD throughout — test written and watched to fail before each module is coded.
 
-**Tech Stack:** Python 3.x, Typer, httpx, anthropic SDK, sentence-transformers, RestrictedPython, numpy, pytest
+**Tech Stack:** Python 3.x, Typer, httpx, anthropic SDK, sentence-transformers, ChromaDB, numpy, RestrictedPython, pytest
+
+> **Task order revised 2026-04-12:** VectorDB pipeline (Tasks 5–9) moved before scorer/PTC/adapters
+> to validate the highest-risk external dependency (ChromaDB) as early as possible.
+> Original numpy-based Tasks 11–12 replaced by ChromaDB equivalents.
 
 ---
 
@@ -19,6 +23,11 @@ ai-kb-quiz/
     question.py            # Question/Chunk/Score/PTCResult/ProgToolResult dataclasses
     router.py              # Pure routing function: (task_type, question_type, mode) → "local"|"premium"
     chunker.py             # Splits markdown into Chunk list at H2/H3 boundaries
+    store.py               # ChromaDB wrapper: add/delete/query with cosine similarity
+    manifest.py            # mtime-based file change tracking: diff() → new/changed/deleted
+    context_cache.py       # SHA-256 content-addressed cache for contextual embedding strings
+    indexer.py             # Incremental KB indexer: chunk → embed → contextualise → store
+    retriever.py           # ChromaDB semantic search: top-N sampling + SeenChunks dedup
     scorer.py              # Scores answers: fill_in via difflib, conceptual/code via model eval
     session_log.py         # Accumulates QuestionLog entries, flushes JSON per question
     ptc.py                 # Runs developer-authored PTC scripts, returns PTCResult
@@ -29,8 +38,6 @@ ai-kb-quiz/
       extract_code_context.py  # Extracts code-relevant context
     sandbox.py             # SandboxRunner protocol + JobObjectRunner + DirectRunner
     prog_tool_calling.py   # Premium model generates script → validate → sandbox → result
-    retriever.py           # Cosine similarity search over numpy index
-    indexer.py             # Incremental KB indexer: chunk → embed → save atomically
     quiz.py                # Session orchestrator — wires all engine components
     models/
       __init__.py
@@ -579,7 +586,469 @@ git commit -m "feat: markdown chunker — splits at H2/H3 boundaries"
 
 ---
 
-## Task 5: Answer Scorer (`engine/scorer.py`)
+## Task 5: VectorStore (`engine/store.py`)
+
+**Files:**
+- Create: `engine/store.py`
+- Create: `tests/integration/test_store.py`
+
+- [ ] **Step 1: Write failing tests**
+
+```python
+# tests/integration/test_store.py
+import pytest
+from engine.store import VectorStore
+
+
+@pytest.fixture
+def store(tmp_path):
+    return VectorStore(persist_dir=tmp_path)
+
+
+def test_empty_store_count_zero(store):
+    assert store.count() == 0
+
+
+def test_add_and_count(store):
+    store.add(ids=["a", "b"], embeddings=[[1.0, 0.0], [0.0, 1.0]],
+              documents=["doc a", "doc b"], metadatas=[{"src": "f.md"}, {"src": "f.md"}])
+    assert store.count() == 2
+
+
+def test_get_ids(store):
+    store.add(ids=["x"], embeddings=[[1.0, 0.0]], documents=["doc"], metadatas=[{}])
+    assert "x" in store.get_ids()
+
+
+def test_query_returns_closest(store):
+    store.add(ids=["near", "far"], embeddings=[[1.0, 0.0], [0.0, 1.0]],
+              documents=["near doc", "far doc"], metadatas=[{}, {}])
+    results = store.query(embedding=[1.0, 0.0], n_results=2)
+    assert results[0]["id"] == "near"
+    assert results[0]["score"] >= results[1]["score"]
+
+
+def test_query_score_in_range(store):
+    store.add(ids=["a"], embeddings=[[1.0, 0.0]], documents=["doc"], metadatas=[{}])
+    results = store.query(embedding=[1.0, 0.0], n_results=1)
+    assert 0.0 <= results[0]["score"] <= 1.0
+
+
+def test_delete_removes_entry(store):
+    store.add(ids=["to_delete"], embeddings=[[1.0, 0.0]], documents=["doc"], metadatas=[{}])
+    store.delete(ids=["to_delete"])
+    assert store.count() == 0
+
+
+def test_delete_empty_list_is_noop(store):
+    store.add(ids=["a"], embeddings=[[1.0, 0.0]], documents=["doc"], metadatas=[{}])
+    store.delete(ids=[])
+    assert store.count() == 1
+
+
+def test_upsert_updates_existing(store):
+    store.add(ids=["a"], embeddings=[[1.0, 0.0]], documents=["original"], metadatas=[{}])
+    store.add(ids=["a"], embeddings=[[0.0, 1.0]], documents=["updated"], metadatas=[{}])
+    assert store.count() == 1
+    results = store.query(embedding=[0.0, 1.0], n_results=1)
+    assert results[0]["document"] == "updated"
+
+
+def test_query_on_empty_store_returns_empty(store):
+    assert store.query(embedding=[1.0, 0.0], n_results=5) == []
+
+
+def test_get_ids_on_empty_store_returns_empty(store):
+    assert store.get_ids() == []
+```
+
+- [ ] **Step 2: Run tests — verify they fail**
+
+```bash
+pytest tests/integration/test_store.py -v
+```
+
+Expected: `ImportError: No module named 'engine.store'`
+
+- [ ] **Step 3: Implement `engine/store.py`**
+
+- [ ] **Step 4: Run tests — verify they pass**
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add engine/store.py tests/integration/test_store.py
+git commit -m "feat: VectorStore — ChromaDB wrapper with cosine similarity"
+```
+
+---
+
+## Task 6: Manifest (`engine/manifest.py`)
+
+**Files:**
+- Create: `engine/manifest.py`
+- Create: `tests/unit/test_manifest.py`
+
+- [ ] **Step 1: Write failing tests**
+
+```python
+# tests/unit/test_manifest.py
+import time
+import pytest
+from pathlib import Path
+from engine.manifest import Manifest
+
+
+@pytest.fixture
+def kb_dir(tmp_path):
+    (tmp_path / "a.md").write_text("content a")
+    (tmp_path / "b.md").write_text("content b")
+    return tmp_path
+
+
+def test_diff_all_new_when_no_manifest(kb_dir, tmp_path):
+    m = Manifest(manifest_path=tmp_path / "manifest.json")
+    diff = m.diff(kb_dir)
+    assert set(diff.new) == {"a.md", "b.md"}
+    assert diff.changed == []
+    assert diff.deleted == []
+
+
+def test_diff_no_changes_after_save(kb_dir, tmp_path):
+    m = Manifest(manifest_path=tmp_path / "manifest.json")
+    diff = m.diff(kb_dir)
+    m.save(kb_dir)
+    diff2 = m.diff(kb_dir)
+    assert diff2.new == []
+    assert diff2.changed == []
+    assert diff2.deleted == []
+
+
+def test_diff_detects_changed_file(kb_dir, tmp_path):
+    m = Manifest(manifest_path=tmp_path / "manifest.json")
+    m.save(kb_dir)
+    time.sleep(0.01)
+    (kb_dir / "a.md").write_text("updated content")
+    diff = m.diff(kb_dir)
+    assert "a.md" in diff.changed
+
+
+def test_diff_detects_new_file(kb_dir, tmp_path):
+    m = Manifest(manifest_path=tmp_path / "manifest.json")
+    m.save(kb_dir)
+    (kb_dir / "new.md").write_text("new content")
+    diff = m.diff(kb_dir)
+    assert "new.md" in diff.new
+
+
+def test_diff_detects_deleted_file(kb_dir, tmp_path):
+    m = Manifest(manifest_path=tmp_path / "manifest.json")
+    m.save(kb_dir)
+    (kb_dir / "a.md").unlink()
+    diff = m.diff(kb_dir)
+    assert "a.md" in diff.deleted
+
+
+def test_manifest_persists_across_instances(kb_dir, tmp_path):
+    path = tmp_path / "manifest.json"
+    Manifest(manifest_path=path).save(kb_dir)
+    diff = Manifest(manifest_path=path).diff(kb_dir)
+    assert diff.new == [] and diff.changed == [] and diff.deleted == []
+```
+
+- [ ] **Step 2: Run tests — verify they fail**
+
+- [ ] **Step 3: Implement `engine/manifest.py`**
+
+- [ ] **Step 4: Run tests — verify they pass**
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add engine/manifest.py tests/unit/test_manifest.py
+git commit -m "feat: Manifest — mtime-based KB file change tracking"
+```
+
+---
+
+## Task 7: ContextCache (`engine/context_cache.py`)
+
+**Files:**
+- Create: `engine/context_cache.py`
+- Create: `tests/unit/test_context_cache.py`
+
+- [ ] **Step 1: Write failing tests**
+
+```python
+# tests/unit/test_context_cache.py
+import pytest
+from engine.context_cache import ContextCache
+
+
+@pytest.fixture
+def cache(tmp_path):
+    return ContextCache(cache_path=tmp_path / "context_cache.json")
+
+
+def test_miss_returns_none(cache):
+    assert cache.get("nonexistent_hash") is None
+
+
+def test_set_and_get(cache):
+    cache.set("abc123", "This chunk describes SSDT hooking.")
+    assert cache.get("abc123") == "This chunk describes SSDT hooking."
+
+
+def test_persists_across_instances(tmp_path):
+    path = tmp_path / "cache.json"
+    ContextCache(cache_path=path).set("h1", "context text")
+    assert ContextCache(cache_path=path).get("h1") == "context text"
+
+
+def test_overwrite_updates_value(cache):
+    cache.set("h1", "original")
+    cache.set("h1", "updated")
+    assert cache.get("h1") == "updated"
+
+
+def test_chunk_hash_is_deterministic():
+    from engine.context_cache import chunk_hash
+    text = "SSDT maps syscall numbers to kernel addresses."
+    assert chunk_hash(text) == chunk_hash(text)
+
+
+def test_chunk_hash_differs_for_different_text():
+    from engine.context_cache import chunk_hash
+    assert chunk_hash("text a") != chunk_hash("text b")
+
+
+def test_chunk_hash_is_16_chars():
+    from engine.context_cache import chunk_hash
+    assert len(chunk_hash("any text")) == 16
+
+
+def test_prune_removes_old_entries(cache):
+    for i in range(10):
+        cache.set(f"h{i}", f"value {i}")
+    cache.prune(max_entries=5)
+    assert len(cache) <= 5
+
+
+def test_len_reflects_entry_count(cache):
+    assert len(cache) == 0
+    cache.set("a", "v1")
+    cache.set("b", "v2")
+    assert len(cache) == 2
+```
+
+- [ ] **Step 2: Run tests — verify they fail**
+
+- [ ] **Step 3: Implement `engine/context_cache.py`**
+
+- [ ] **Step 4: Run tests — verify they pass**
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add engine/context_cache.py tests/unit/test_context_cache.py
+git commit -m "feat: ContextCache — SHA-256 content-addressed cache for contextual embeddings"
+```
+
+---
+
+## Task 8: KB Indexer (`engine/indexer.py`)
+
+**Files:**
+- Create: `engine/indexer.py`
+- Create: `tests/integration/test_indexer.py`
+
+- [ ] **Step 1: Write failing tests**
+
+```python
+# tests/integration/test_indexer.py
+import pytest
+from pathlib import Path
+from unittest.mock import MagicMock
+from engine.indexer import Indexer
+from engine.store import VectorStore
+from engine.manifest import Manifest
+from engine.context_cache import ContextCache
+
+
+def _fake_embed(texts: list[str]) -> list[list[float]]:
+    """Deterministic fake embedder — unique vector per text."""
+    import hashlib
+    vecs = []
+    for t in texts:
+        h = int(hashlib.md5(t.encode()).hexdigest(), 16)
+        vecs.append([float((h >> i) & 0xFF) / 255.0 for i in range(8)])
+    return vecs
+
+
+@pytest.fixture
+def kb_dir(tmp_path):
+    (tmp_path / "kb").mkdir()
+    (tmp_path / "kb" / "topic_a.md").write_text(
+        "## SSDT Hooking\n\nSSDT maps syscall numbers to kernel addresses.\n\n"
+        "## Kernel Callbacks\n\nPsSetCreateProcessNotifyRoutine registers callbacks.\n"
+    )
+    return tmp_path / "kb"
+
+
+@pytest.fixture
+def indexer(tmp_path, kb_dir):
+    store = VectorStore(persist_dir=tmp_path / "index")
+    manifest = Manifest(manifest_path=tmp_path / "manifest.json")
+    cache = ContextCache(cache_path=tmp_path / "cache.json")
+    return Indexer(store=store, manifest=manifest, cache=cache, embed_fn=_fake_embed)
+
+
+def test_full_index_stores_chunks(indexer, kb_dir):
+    indexer.index(kb_dir, incremental=False)
+    assert indexer.store.count() > 0
+
+
+def test_full_index_updates_manifest(indexer, kb_dir, tmp_path):
+    indexer.index(kb_dir, incremental=False)
+    manifest2 = Manifest(manifest_path=tmp_path / "manifest.json")
+    diff = manifest2.diff(kb_dir)
+    assert diff.new == [] and diff.changed == []
+
+
+def test_incremental_index_skips_unchanged(indexer, kb_dir):
+    indexer.index(kb_dir, incremental=False)
+    count_after_full = indexer.store.count()
+    indexer.index(kb_dir, incremental=True)
+    assert indexer.store.count() == count_after_full
+
+
+def test_incremental_index_picks_up_new_file(indexer, kb_dir):
+    indexer.index(kb_dir, incremental=False)
+    (kb_dir / "new_topic.md").write_text("## New\n\nBrand new content here.\n")
+    indexer.index(kb_dir, incremental=True)
+    assert indexer.store.count() > 2
+
+
+def test_context_adapter_called_per_chunk(tmp_path, kb_dir):
+    store = VectorStore(persist_dir=tmp_path / "index")
+    manifest = Manifest(manifest_path=tmp_path / "manifest.json")
+    cache = ContextCache(cache_path=tmp_path / "cache.json")
+    context_adapter = MagicMock(return_value="Mock context description.")
+    indexer = Indexer(store=store, manifest=manifest, cache=cache,
+                      embed_fn=_fake_embed, context_adapter=context_adapter)
+    indexer.index(kb_dir, incremental=False)
+    assert context_adapter.call_count > 0
+
+
+def test_no_context_adapter_still_indexes(indexer, kb_dir):
+    # context_adapter=None — contextual embedding disabled
+    indexer.index(kb_dir, incremental=False)
+    assert indexer.store.count() > 0
+```
+
+- [ ] **Step 2: Run tests — verify they fail**
+
+- [ ] **Step 3: Implement `engine/indexer.py`**
+
+- [ ] **Step 4: Run tests — verify they pass**
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add engine/indexer.py tests/integration/test_indexer.py
+git commit -m "feat: Indexer — incremental KB indexer with ChromaDB and contextual embedding"
+```
+
+---
+
+## Task 9: Retriever (`engine/retriever.py`)
+
+**Files:**
+- Create: `engine/retriever.py`
+- Create: `tests/integration/test_retriever.py`
+
+- [ ] **Step 1: Write failing tests**
+
+```python
+# tests/integration/test_retriever.py
+import pytest
+from pathlib import Path
+from engine.retriever import Retriever, IndexNotFoundError, SeenChunks
+from engine.store import VectorStore
+from engine.question import Chunk
+
+
+def _fake_embed(text: str) -> list[float]:
+    import hashlib
+    h = int(hashlib.md5(text.encode()).hexdigest(), 16)
+    return [float((h >> i) & 0xFF) / 255.0 for i in range(8)]
+
+
+@pytest.fixture
+def populated_store(tmp_path):
+    store = VectorStore(persist_dir=tmp_path)
+    store.add(
+        ids=["ssdt", "list_entry", "irql"],
+        embeddings=[_fake_embed("SSDT"), _fake_embed("LIST_ENTRY"), _fake_embed("IRQL")],
+        documents=["SSDT maps syscalls.", "LIST_ENTRY is a linked list.", "IRQL controls interrupt levels."],
+        metadatas=[{"source_file": "wi.md", "heading": "SSDT"},
+                   {"source_file": "wi.md", "heading": "LIST_ENTRY"},
+                   {"source_file": "wi.md", "heading": "IRQL"}],
+    )
+    return store
+
+
+def test_raises_if_store_empty(tmp_path):
+    store = VectorStore(persist_dir=tmp_path)
+    with pytest.raises(IndexNotFoundError):
+        Retriever(store=store, embed_fn=_fake_embed)
+
+
+def test_search_returns_chunks(tmp_path, populated_store):
+    r = Retriever(store=populated_store, embed_fn=_fake_embed)
+    results = r.search("SSDT syscall table", top_k=2)
+    assert len(results) <= 2
+    assert all(isinstance(c, Chunk) for c in results)
+
+
+def test_search_top_k_respected(tmp_path, populated_store):
+    r = Retriever(store=populated_store, embed_fn=_fake_embed)
+    results = r.search("kernel", top_k=1)
+    assert len(results) == 1
+
+
+def test_search_with_seed_is_deterministic(tmp_path, populated_store):
+    r = Retriever(store=populated_store, embed_fn=_fake_embed)
+    r1 = r.search("SSDT", top_k=2, top_n=3, seed=42)
+    r2 = r.search("SSDT", top_k=2, top_n=3, seed=42)
+    assert [c.heading for c in r1] == [c.heading for c in r2]
+
+
+def test_seen_chunks_deweighted(tmp_path, populated_store):
+    seen = SeenChunks(tmp_path / "seen.json")
+    seen.mark(["ssdt"])
+    r = Retriever(store=populated_store, embed_fn=_fake_embed, seen_chunks=seen)
+    results = r.search("SSDT syscall", top_k=1, top_n=3, seed=0)
+    # Unseen chunks should be preferred
+    assert results[0].heading != "SSDT"
+```
+
+- [ ] **Step 2: Run tests — verify they fail**
+
+- [ ] **Step 3: Implement `engine/retriever.py`**
+
+- [ ] **Step 4: Run tests — verify they pass**
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add engine/retriever.py tests/integration/test_retriever.py
+git commit -m "feat: Retriever — ChromaDB semantic search, top-N sampling, SeenChunks dedup"
+```
+
+---
+
+## Task 10: Answer Scorer (`engine/scorer.py`)
 
 **Files:**
 - Create: `engine/scorer.py`
