@@ -1,0 +1,27 @@
+@startuml engine-premium-adapter-seq
+skinparam sequenceMessageAlign center
+
+participant Caller
+participant "PremiumAdapter" as PA
+participant "anthropic\n.Anthropic" as SDK
+participant "Anthropic\nMessages API" as API
+
+Caller -> PA : generate("Generate a quiz question\nabout SSDT hooking")
+
+PA -> SDK : messages.create(\n    model=self._model,\n    max_tokens=self._max_tokens,\n    messages=[{role: "user",\n               content: prompt}])
+SDK -> API : HTTPS POST /v1/messages
+API --> SDK : Message(content=[TextBlock(text="What does...")],\n              stop_reason="end_turn")
+SDK --> PA : Message object
+
+PA -> PA : message.content[0].text.strip()
+PA --> Caller : "What does SSDT stand for and\nhow do rootkits exploit it?"
+
+...
+
+alt API error / rate limit
+  API --> SDK : APIStatusError (4xx / 5xx)
+  SDK --> PA : raises anthropic.APIStatusError
+  PA --> Caller : propagates exception
+end
+
+@enduml

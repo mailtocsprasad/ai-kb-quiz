@@ -1,0 +1,44 @@
+@startuml engine-indexer
+skinparam classAttributeIconSize 0
+
+class Indexer {
+  - _kb_dir : Path
+  - _index_dir : Path
+  - _embed_fn : EmbedFn
+  - _context_adapter : ModelAdapter | None
+  - _chunker_fn : ChunkerFn
+  --
+  + __init__(kb_dir: Path, index_dir: Path,\n           embed_fn: EmbedFn,\n           context_adapter: ModelAdapter | None,\n           chunker_fn: ChunkerFn)
+  + build_full() : void
+  + build_incremental() : void
+  - _index_file(path, store, cache, manifest) : list[str]
+  - _prepare_text(chunk: Chunk,\n                 context: str | None) : str
+}
+
+interface ModelAdapter {
+  + generate(prompt: str) : str
+}
+
+interface EmbedFn <<Callable[[str], list[float]]>>
+
+class VectorStore
+class Manifest
+class ContextCache
+class "chunker_fn\nchunk_markdown()" as Chunker
+
+Indexer --> VectorStore     : writes vectors + metadata
+Indexer --> Manifest        : tracks files + chunk IDs
+Indexer --> ContextCache    : caches context strings
+Indexer --> ModelAdapter    : generates context (optional)
+Indexer --> EmbedFn         : encodes prepared text
+Indexer --> Chunker         : splits MD into Chunks
+
+note bottom of Indexer
+  context_adapter=None disables
+  contextual embedding — plain
+  encode(chunk.text) is used.
+  Enables local mode with no
+  API calls during indexing.
+end note
+
+@enduml

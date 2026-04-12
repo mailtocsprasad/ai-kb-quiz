@@ -1,0 +1,48 @@
+@startuml e2e-02-incremental-index
+skinparam sequenceMessageAlign center
+title E2E-02: Incremental KB Index
+
+actor User
+participant "CLI\nmain.py" as CLI
+participant "Indexer" as IDX
+participant "Manifest" as MAN
+participant "VectorStore" as VS
+participant "ContextCache" as CC
+participant "PremiumAdapter" as PREM
+participant "EmbedFn" as EMB
+
+User -> CLI : python cli/main.py kb index --incremental
+
+CLI -> IDX : build_incremental()
+
+IDX -> IDX : scan kb_dir/*.md → disk_files
+IDX -> MAN : diff(disk_files)
+MAN --> IDX : new=[f_new], changed=[f_changed], deleted=[f_deleted]
+
+group Handle deleted files
+  IDX -> MAN : get_chunk_ids(f_deleted)
+  MAN --> IDX : ["f_deleted::0", "f_deleted::1"]
+  IDX -> VS : delete(["f_deleted::0", "f_deleted::1"])
+  IDX -> MAN : remove(f_deleted)
+end
+
+group Handle changed files (re-index)
+  IDX -> MAN : get_chunk_ids(f_changed)
+  MAN --> IDX : old_chunk_ids
+  IDX -> VS : delete(old_chunk_ids)
+  note right : Remove stale vectors first
+  IDX -> IDX : [index f_changed — same as full index loop]
+  IDX -> MAN : update(f_changed, new_ids)
+end
+
+group Handle new files
+  IDX -> IDX : [index f_new — same as full index loop]
+  IDX -> MAN : update(f_new, chunk_ids)
+end
+
+IDX -> CC : save()
+IDX -> MAN : save()
+
+CLI --> User : "[kb-index] Incremental: +N new, ~M changed, -P deleted"
+
+@enduml

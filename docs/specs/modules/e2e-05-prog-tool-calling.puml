@@ -1,0 +1,60 @@
+@startuml e2e-05-prog-tool-calling
+skinparam sequenceMessageAlign center
+title E2E-05: Programmable Tool Calling Pipeline
+
+participant "QuizOrchestrator\nquiz.py" as QUIZ
+participant "ProgToolCalling\nprog_tool_calling.py" as PTC2
+participant "PremiumAdapter" as PREM
+participant "Sandbox\nsandbox.py" as SB
+participant "SessionLog" as LOG
+
+QUIZ -> PTC2 : extract(ptc_result\n  compressed_text="SSDT: maps syscalls...\nCallbacks: PsSetCreateProcess...",\n  raw_tokens=800, compressed_tokens=180)
+
+== Script Generation ==
+PTC2 -> PREM : generate(script_prompt +\n  ptc_result.compressed_text)
+note right of PREM
+  Prompt asks model to write a Python
+  script that reads JSON from stdin and
+  writes a structured summary to stdout.
+end note
+PREM --> PTC2 : "import json, sys\ndata = json.load(sys.stdin)\n..."
+
+== Validation ==
+PTC2 -> SB : validate(script)
+note right of SB
+  RestrictedPython AST check:
+  blocks import os, subprocess,
+  open(), __class__, etc.
+end note
+
+alt validation FAILS
+  SB --> PTC2 : ValidationResult(ok=False, reason="Forbidden import: os")
+  PTC2 --> QUIZ : ProgToolResult(output_text=ptc_result.compressed_text,\n                script=script, fallback_used=True)
+  note right : Falls back to PTCResult — raw KB text\nnever reaches the model even on failure
+end
+
+SB --> PTC2 : ValidationResult(ok=True)
+
+== Sandboxed Execution ==
+PTC2 -> SB : execute(script, input=ptc_result.compressed_text)
+note right of SB
+  JobObjectRunner (Windows):
+    - RestrictedPython exec
+    - Win32 Job Object:
+        no child processes,
+        memory cap,
+        CPU time limit
+  DirectRunner (CI/Linux):
+    - RestrictedPython exec only
+end note
+
+alt execution FAILS or TIMEOUT
+  SB --> PTC2 : ExecutionResult(ok=False, output="", error="timeout")
+  PTC2 --> QUIZ : ProgToolResult(output_text=ptc_result.compressed_text,\n                script=script, fallback_used=True)
+end
+
+SB --> PTC2 : ExecutionResult(ok=True,\n  output='{"summary": "SSDT: syscall table...", "concepts": [...]}')
+
+PTC2 --> QUIZ : ProgToolResult(\n  output_text='{"summary": "SSDT: syscall table...", ...}',\n  script=script,\n  fallback_used=False)
+
+@enduml

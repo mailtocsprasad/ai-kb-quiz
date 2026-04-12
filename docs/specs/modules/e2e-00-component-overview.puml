@@ -1,0 +1,77 @@
+@startuml e2e-00-component-overview
+skinparam componentStyle rectangle
+skinparam backgroundColor white
+
+' ── CLI ──────────────────────────────────────
+component "cli.main" as CLI #LightBlue
+
+' ── Quiz Pipeline ────────────────────────────
+component "quiz.py\nOrchestrator" as QUIZ #LightGreen
+component "router.py" as ROUTER #LightGreen
+component "scorer.py" as SCORER #LightGreen
+component "session_log.py" as LOG #LightGreen
+component "ptc.py\nptc_scripts/" as PTC #LightGreen
+component "prog_tool_calling.py" as PTC2 #LightGreen
+component "sandbox.py" as SANDBOX #LightGreen
+
+' ── Retrieval ────────────────────────────────
+component "retriever.py" as RET #LightYellow
+component "indexer.py" as IDX #LightYellow
+component "store.py\nVectorStore" as STORE #LightYellow
+component "manifest.py" as MAN #LightYellow
+component "context_cache.py" as CC #LightYellow
+component "chunker.py" as CHUNKER #LightYellow
+
+' ── Models ───────────────────────────────────
+component "ModelAdapter\nProtocol" as PROTO #LightCoral
+component "local_adapter.py\nLocalAdapter" as LOCAL #LightCoral
+component "premium_adapter.py\nPremiumAdapter" as PREM #LightCoral
+
+' ── External ─────────────────────────────────
+component "Ollama\n:11434" as OLLAMA #WhiteSmoke
+component "Anthropic\nMessages API" as ANTHROPIC #WhiteSmoke
+component "KB files\n.md" as KB #WhiteSmoke
+component "ChromaDB\nkb_index/" as CHROMA #WhiteSmoke
+component "sentence-transformers\nEmbedFn" as EMBED #WhiteSmoke
+
+' ── CLI → Engine ─────────────────────────────
+CLI --> QUIZ    : quiz --topic
+CLI --> IDX     : kb index
+CLI --> RET     : kb search
+
+' ── Quiz Pipeline ────────────────────────────
+QUIZ --> RET    : search(query)
+QUIZ --> PTC    : compress(chunks)
+QUIZ --> ROUTER : route(task, type, mode)
+QUIZ --> SCORER : score(answer)
+QUIZ --> LOG    : log(QuestionLog)
+QUIZ --> PTC2   : extract(ptc_result)
+
+ROUTER --> LOCAL : local tasks
+ROUTER --> PREM  : premium tasks
+
+PTC2 --> PREM    : generate script
+PTC2 --> SANDBOX : validate + execute
+
+' ── Retrieval ────────────────────────────────
+RET --> STORE   : query(vector)
+RET --> EMBED   : encode(query)
+
+IDX --> CHUNKER : chunk_markdown()
+IDX --> CC      : get/set context
+IDX --> MAN     : diff / update
+IDX --> PREM    : contextual embedding
+IDX --> EMBED   : encode(chunk)
+IDX --> STORE   : add / delete
+
+' ── External ─────────────────────────────────
+LOCAL --> OLLAMA
+PREM  --> ANTHROPIC
+STORE --> CHROMA
+IDX   --> KB
+RET   --> CHROMA
+
+LOCAL ..|> PROTO
+PREM  ..|> PROTO
+
+@enduml

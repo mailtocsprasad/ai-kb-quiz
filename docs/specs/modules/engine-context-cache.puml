@@ -1,0 +1,35 @@
+@startuml engine-context-cache
+skinparam classAttributeIconSize 0
+
+class ContextCache {
+  - _path : Path
+  - _data : dict[str, str]
+  --
+  + __init__(path: Path)
+  + get(key: str) : str | None
+  + set(key: str, value: str) : void
+  + prune(keep_hashes: set[str]) : void
+  + save() : void
+}
+
+class "chunk_hash" <<function>> {
+  + chunk_hash(text: str) : str
+  ..
+  SHA-256[:16] of chunk text
+}
+
+ContextCache ..> "chunk_hash" : key produced by
+
+note right of ContextCache
+  Content-addressed:
+    key = chunk_hash(chunk.text)
+    value = context string from model
+  Same chunk text always maps
+    to the same cache key —
+    renames don't miss cache
+  Persists as JSON at _path
+  prune() removes stale entries
+    (chunks no longer in KB)
+end note
+
+@enduml

@@ -1,0 +1,51 @@
+@startuml e2e-01-full-index
+skinparam sequenceMessageAlign center
+title E2E-01: Full KB Index (with Contextual Embedding)
+
+actor User
+participant "CLI\nmain.py" as CLI
+participant "Indexer" as IDX
+participant "chunker_fn" as CHK
+participant "ContextCache" as CC
+participant "PremiumAdapter\n(context_adapter)" as PREM
+participant "EmbedFn\n(sentence-transformers)" as EMB
+participant "VectorStore\n(ChromaDB)" as VS
+participant "Manifest" as MAN
+
+User -> CLI : python cli/main.py kb index
+
+CLI -> IDX : build_full()
+
+IDX -> IDX : scan kb_dir/*.md\n→ [f1.md, f2.md, ...]
+
+loop for each .md file
+  IDX -> CHK : chunk_markdown(file_text, source_file)
+  CHK --> IDX : [Chunk(heading, text, source_file), ...]
+
+  loop for each Chunk
+    IDX -> CC : get(chunk_hash(chunk.text))
+
+    alt cache MISS (first run or chunk changed)
+      IDX -> PREM : generate(context_prompt\n  file, heading, text[:1500])
+      PREM --> IDX : "This section covers SSDT hooking\nas a rootkit technique..."
+      IDX -> CC : set(hash, context_string)
+    else cache HIT (unchanged chunk)
+      CC --> IDX : cached context_string
+      note right : No model call — saves API cost
+    end
+
+    IDX -> IDX : prepared = "{context}\n\n{chunk.text}"
+    IDX -> EMB : encode(prepared)
+    EMB --> IDX : vector[384]
+    IDX -> VS : add(chunk_id, vector,\n        prepared, {file, heading, ...})
+  end
+
+  IDX -> MAN : update(file, chunk_ids)
+end
+
+IDX -> CC : save()
+IDX -> MAN : save()
+
+CLI --> User : "[kb-index] Done. N chunks indexed."
+
+@enduml

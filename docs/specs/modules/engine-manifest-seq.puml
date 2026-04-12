@@ -1,0 +1,31 @@
+@startuml engine-manifest-seq
+skinparam sequenceMessageAlign center
+
+participant Indexer
+participant Manifest
+participant "VectorStore" as VS
+
+Indexer -> Manifest : diff(disk_files)
+Manifest --> Indexer : new=[f_new], changed=[f_changed], deleted=[f_deleted]
+
+== Handle deleted ==
+Indexer -> Manifest : get_chunk_ids(f_deleted)
+Manifest --> Indexer : ["f_deleted::0", "f_deleted::1"]
+Indexer -> VS : delete(["f_deleted::0", "f_deleted::1"])
+Indexer -> Manifest : remove(f_deleted)
+
+== Handle changed (re-index) ==
+Indexer -> Manifest : get_chunk_ids(f_changed)
+Manifest --> Indexer : old_ids
+Indexer -> VS : delete(old_ids)
+note right : re-index produces new chunk_ids
+Indexer -> Manifest : update(f_changed, new_ids)
+
+== Handle new ==
+note right : index produces chunk_ids
+Indexer -> Manifest : update(f_new, chunk_ids)
+
+== Persist ==
+Indexer -> Manifest : save()
+
+@enduml

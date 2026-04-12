@@ -1,0 +1,25 @@
+@startuml engine-retriever-seq
+skinparam sequenceMessageAlign center
+
+participant "Quiz\nOrchestrator" as QO
+participant "Retriever" as RET
+participant "EmbedFn" as EMB
+participant "VectorStore" as VS
+
+QO -> RET : search("SSDT hooking", top_k=5, threshold=0.6)
+
+alt index_dir does not exist
+  RET --> QO : raise IndexNotFoundError\n("Run: python cli/main.py kb index")
+end
+
+RET -> EMB : encode("SSDT hooking")
+EMB --> RET : query_vector[384]
+
+RET -> VS : query(query_vector, top_k=5, threshold=0.6)
+VS --> RET : [{chunk, score, file, heading}, ...]
+
+RET -> RET : map each dict → Chunk(text, source_file, heading)\nsort by score descending
+
+RET --> QO : [Chunk("The SSDT maps syscall...", "windows-internals.md", "SSDT Hooking"), ...]
+
+@enduml

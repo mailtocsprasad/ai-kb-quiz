@@ -1,0 +1,30 @@
+@startuml engine-store-seq
+skinparam sequenceMessageAlign center
+
+actor Caller
+participant "VectorStore" as VS
+participant "ChromaDB\nCollection" as COL
+
+== add ==
+Caller -> VS : add("kb/file.md::0", vector, text, {file, heading})
+VS -> COL : add(ids, embeddings, documents, metadatas)
+
+== query ==
+Caller -> VS : query(query_vector, top_k=5, threshold=0.6)
+VS -> COL : count()
+alt count == 0
+  VS --> Caller : []
+else count > 0
+  VS -> COL : query(query_embeddings, n_results=min(top_k, count),\n             include=[documents, metadatas, distances])
+  COL --> VS : documents[], metadatas[], distances[]
+  loop for each result
+    VS -> VS : score = 1.0 - dist\nif score >= threshold: append
+  end
+  VS --> Caller : list[dict{chunk, score, ...metadata}]
+end
+
+== delete ==
+Caller -> VS : delete(["kb/file.md::0", "kb/file.md::1"])
+VS -> COL : delete(ids)
+
+@enduml

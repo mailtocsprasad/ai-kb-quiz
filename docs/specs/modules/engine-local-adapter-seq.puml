@@ -1,0 +1,27 @@
+@startuml engine-local-adapter-seq
+skinparam sequenceMessageAlign center
+
+participant Caller
+participant "LocalAdapter" as LA
+participant "httpx.Client" as HTTP
+participant "Ollama\n:11434/api/generate" as OLLAMA
+
+Caller -> LA : generate("What is the SSDT?")
+
+LA -> HTTP : post(base_url + "/api/generate",\n        json={model, prompt, stream: false},\n        timeout=config.timeout_sec)
+HTTP -> OLLAMA : HTTP POST
+OLLAMA --> HTTP : 200 {"response": "SSDT is...", "done": true}
+HTTP --> LA : Response(status=200)
+
+LA -> LA : response.raise_for_status()
+LA -> LA : response.json()["response"].strip()
+LA --> Caller : "SSDT is..."
+
+...
+
+alt Ollama unreachable
+  HTTP --> LA : ConnectError / TimeoutException
+  LA --> Caller : raise OllamaUnavailableError\n("Ollama not running at {base_url}")
+end
+
+@enduml

@@ -6,11 +6,21 @@
 mode: hybrid
 
 # Local model — must be available via Ollama (ollama pull <name>)
-# CPU-friendly options (no GPU required):
-#   phi4-mini        3.8B  — best reasoning/code on CPU (recommended)
-#   llama3.2:3b      3B    — solid general fallback
-#   gemma3:4b        4B    — strong document understanding
-#   qwen2.5-coder:7b 7B    — best for code-heavy topics (slower on CPU)
+#
+# Install Ollama first: winget install Ollama.Ollama
+#
+# CPU-only model guide (no GPU required):
+#
+#   Model                RAM    i7-1165G7 (4-core)  M1 Pro 16GB   Best for
+#   ─────────────────────────────────────────────────────────────────────────
+#   phi4-mini (3.8B Q4)  ~3.5GB  ✅ ~8–12 t/s        ✅ fast       Reasoning, code ← recommended
+#   llama3.2:3b  (Q4)    ~3.0GB  ✅ ~10–14 t/s       ✅ fast       General fallback
+#   gemma3:4b    (Q4)    ~4.0GB  ✅ ~7–10 t/s        ✅ good       Document understanding
+#   qwen2.5-coder:7b(Q4) ~5.5GB  ⚠️  ~3–5 t/s        ✅ good       Code-heavy KB topics
+#   mistral:7b   (Q4)    ~5.5GB  ⚠️  ~3–5 t/s        ✅ good       General (fine-tuning friendly)
+#   phi-4 (14B Q4)       ~9.5GB  ❌  too slow         ✅ ~6 t/s     M1 Pro only
+#
+# Recommended for MSI Modern 14 (i7-1165G7, 16GB, no discrete GPU): phi4-mini
 local_model: phi4-mini
 
 # Premium model (Anthropic Claude)

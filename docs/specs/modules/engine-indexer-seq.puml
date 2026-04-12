@@ -1,0 +1,37 @@
+@startuml engine-indexer-seq
+skinparam sequenceMessageAlign center
+
+participant "Indexer" as IDX
+participant "Manifest" as MAN
+participant "VectorStore" as VS
+participant "ContextCache" as CC
+participant "ModelAdapter" as MA
+participant "EmbedFn" as EMB
+
+IDX -> MAN : diff(disk_files)
+MAN --> IDX : new=[f1], changed=[], deleted=[]
+
+loop for each .md file (new or changed)
+  IDX -> IDX : chunk_markdown(file_text)
+
+  loop for each Chunk
+    IDX -> CC : get(chunk_hash(chunk.text))
+    alt cache miss AND context_adapter is not None
+      IDX -> MA : generate(context_prompt\n  file=f1, heading=chunk.heading,\n  text=chunk.text[:1500])
+      MA --> IDX : context_string
+      IDX -> CC : set(hash, context_string)
+    end
+
+    IDX -> IDX : _prepare_text(chunk, context)\n→ "{context}\n\n{chunk.text}"
+    IDX -> EMB : encode(prepared_text)
+    EMB --> IDX : vector[384]
+    IDX -> VS : add(chunk_id, vector, prepared_text,\n        {file, heading, chunk_index})
+  end
+
+  IDX -> MAN : update(f1, chunk_ids)
+end
+
+IDX -> CC : save()
+IDX -> MAN : save()
+
+@enduml

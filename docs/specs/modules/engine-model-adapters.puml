@@ -1,0 +1,62 @@
+@startuml engine-model-adapters
+skinparam classAttributeIconSize 0
+
+interface ModelAdapter <<Protocol>> {
+  + generate(prompt: str,\n           temperature: float = 0.7) : str
+}
+
+class LocalAdapter {
+  - _model : str
+  - _base_url : str
+  - _client : httpx.Client
+  --
+  + __init__(model: str, base_url: str,\n           client: httpx.Client)
+  + generate(prompt: str,\n           temperature: float = 0.7) : str
+}
+
+class PremiumAdapter {
+  - _model : str
+  - _client : anthropic.Anthropic
+  - _max_tokens : int
+  --
+  + __init__(model: str,\n           client: anthropic.Anthropic,\n           max_tokens: int)
+  + generate(prompt: str,\n           temperature: float = 0.7) : str
+}
+
+class MockAdapter {
+  + response : str
+  + calls : list[str]
+  --
+  + __init__(response: str = "mock response")
+  + generate(prompt: str,\n           temperature: float = 0.7) : str
+}
+
+LocalAdapter    ..|> ModelAdapter
+PremiumAdapter  ..|> ModelAdapter
+MockAdapter     ..|> ModelAdapter
+
+note right of LocalAdapter
+  Backend: Ollama HTTP API
+  POST /api/generate
+  stream: false
+  Injected httpx.Client
+  — swappable in tests
+end note
+
+note right of PremiumAdapter
+  Backend: Anthropic SDK
+  client.messages.create()
+  Returns content[0].text
+  Injected anthropic.Anthropic
+  — swappable in tests
+end note
+
+note right of MockAdapter
+  Deterministic test double
+  Records every prompt in calls[]
+  Defined in tests/conftest.py
+  — no network, no SDK
+  temperature param ignored
+end note
+
+@enduml

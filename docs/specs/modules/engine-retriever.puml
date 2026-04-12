@@ -1,0 +1,41 @@
+@startuml engine-retriever
+skinparam classAttributeIconSize 0
+
+class Retriever {
+  - _store : VectorStore
+  - _embed_fn : EmbedFn
+  --
+  + __init__(index_dir: Path, embed_fn: EmbedFn,\n           collection_name: str = "kb")
+  + search(query: str, top_k: int = 5,\n          top_n: int | None = 20,\n          threshold: float = 0.0,\n          seed: int | None = None) : list[Chunk]
+}
+
+class VectorStore {
+  + query(...) : list[dict]
+}
+
+interface EmbedFn <<Callable[[str], list[float]]>>
+
+class Chunk {
+  + text : str
+  + source_file : str
+  + heading : str
+}
+
+class IndexNotFoundError <<exception>>
+
+Retriever --> VectorStore : queries
+Retriever --> EmbedFn : encodes query
+Retriever ..> Chunk : returns list of
+Retriever ..> IndexNotFoundError : raises if index_dir missing
+
+note right of Retriever
+  top_n candidates fetched from ChromaDB;
+  top_k randomly sampled from them.
+  seed pins RNG for test determinism.
+  top_n=None → deterministic top_k.
+  Raises IndexNotFoundError if
+  index_dir does not exist —
+  message includes rebuild instructions.
+end note
+
+@enduml

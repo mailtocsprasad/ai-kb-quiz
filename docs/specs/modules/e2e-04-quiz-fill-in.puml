@@ -1,0 +1,57 @@
+@startuml e2e-04-quiz-fill-in
+skinparam sequenceMessageAlign center
+title E2E-04: Quiz Session — Fill-in Question (Hybrid Mode)
+
+actor User
+participant "CLI\nmain.py" as CLI
+participant "QuizOrchestrator\nquiz.py" as QUIZ
+participant "Retriever" as RET
+participant "PTC\nptc.py" as PTC
+participant "Router\nrouter.py" as ROUTER
+participant "LocalAdapter\n(Ollama)" as LOCAL
+participant "Scorer\nscorer.py" as SCORER
+participant "SessionLog\nsession_log.py" as LOG
+
+User -> CLI : python cli/main.py quiz --topic "SSDT"
+CLI -> QUIZ : run_session(topic="SSDT", mode="hybrid")
+
+note over QUIZ, LOG
+  Retrieval + PTC phase identical to E2E-03.
+  Shown from routing step onward.
+end note
+
+== Routing + Question Generation ==
+QUIZ -> ROUTER : route("generate_question", "fill_in", "hybrid")
+ROUTER --> QUIZ : "local"
+
+QUIZ -> LOCAL : generate(question_prompt +\n  ptc_result.compressed_text)
+LOCAL --> QUIZ : "The _____ table maps Windows\nsyscall numbers to kernel function addresses."
+
+QUIZ --> User : Q: "The _____ table maps Windows\n    syscall numbers to kernel function addresses."
+
+== User Answers ==
+User -> CLI : types answer: "SSDT"
+CLI -> QUIZ : user_answer = "SSDT"
+
+== Routing + Answer Scoring ==
+QUIZ -> ROUTER : route("score_answer", "fill_in", "hybrid")
+ROUTER --> QUIZ : "local"
+
+note right of QUIZ
+  fill_in scoring uses difflib,
+  not a model call — local means
+  score_fill_in() is called directly.
+end note
+
+QUIZ -> SCORER : score_fill_in(user_answer="SSDT",\n               correct_answer="SSDT")
+SCORER -> SCORER : user.lower() == correct.lower() → 1.0
+SCORER --> QUIZ : Score(value=1.0, feedback="Correct!", correct_answer="SSDT")
+
+== Logging ==
+QUIZ -> LOG : append(QuestionLog(type="fill_in", score=1.0,\n              model_used="local", tokens_local=95,\n              tokens_premium=0, ...))
+LOG -> LOG : flush to session_<timestamp>.json
+
+QUIZ --> CLI : Score(1.0, feedback="Correct!", correct_answer="SSDT")
+CLI --> User : Score: 1.0 — Correct!\nCorrect answer: SSDT\n\nNext question? (Y/N)
+
+@enduml

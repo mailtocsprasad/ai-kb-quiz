@@ -1,0 +1,69 @@
+@startuml e2e-03-quiz-conceptual
+skinparam sequenceMessageAlign center
+title E2E-03: Quiz Session — Conceptual Question (Hybrid Mode)
+
+actor User
+participant "CLI\nmain.py" as CLI
+participant "QuizOrchestrator\nquiz.py" as QUIZ
+participant "Retriever" as RET
+participant "VectorStore" as VS
+participant "EmbedFn" as EMB
+participant "PTC\nptc.py" as PTC
+participant "ProgToolCalling\nprog_tool_calling.py" as PTC2
+participant "Router\nrouter.py" as ROUTER
+participant "PremiumAdapter" as PREM
+participant "Scorer\nscorer.py" as SCORER
+participant "SessionLog\nsession_log.py" as LOG
+
+User -> CLI : python cli/main.py quiz --topic "SSDT"
+CLI -> QUIZ : run_session(topic="SSDT", mode="hybrid")
+
+== Retrieval ==
+QUIZ -> RET : search("SSDT", top_k=5, threshold=0.6)
+RET -> EMB : encode("SSDT")
+EMB --> RET : query_vector
+RET -> VS : query(query_vector, top_k=5, threshold=0.6)
+VS --> RET : [{chunk, score, heading, file}, ...]
+RET --> QUIZ : [Chunk("SSDT maps syscall...", ...), ...]
+
+== PTC Compression ==
+QUIZ -> PTC : run("extract_concepts", chunks)
+PTC -> PTC : execute ptc_scripts/extract_concepts.py\n(JSON chunks → stdin, stdout → compact text)
+PTC --> QUIZ : PTCResult(compressed_text, raw_tokens=800, compressed_tokens=180)
+
+== Programmable Tool Calling (optional further compression) ==
+QUIZ -> PTC2 : extract(ptc_result)
+PTC2 -> PREM : generate(script_generation_prompt +\n  ptc_result.compressed_text)
+PREM --> PTC2 : "import json\ndata = json.loads(input)..."
+PTC2 -> PTC2 : sandbox.validate(script)
+PTC2 -> PTC2 : sandbox.execute(script, ptc_result.compressed_text)
+PTC2 --> QUIZ : ProgToolResult(output_text, script, fallback_used=False)
+
+== Routing + Question Generation ==
+QUIZ -> ROUTER : route("generate_question", "conceptual", "hybrid")
+ROUTER --> QUIZ : "premium"
+
+QUIZ -> PREM : generate(question_prompt +\n  prog_tool_result.output_text)
+PREM --> QUIZ : "Explain how rootkits exploit SSDT\nto intercept system calls."
+
+QUIZ --> User : Q: "Explain how rootkits exploit SSDT\n    to intercept system calls."
+
+== User Answers ==
+User -> CLI : "By overwriting SSDT entries to redirect\n syscalls to malicious handlers."
+
+== Routing + Answer Evaluation ==
+QUIZ -> ROUTER : route("evaluate_answer", "conceptual", "hybrid")
+ROUTER --> QUIZ : "premium"
+
+QUIZ -> SCORER : score_from_model_eval(user_answer, question, correct_answer, adapter=premium)
+SCORER -> PREM : generate(eval_prompt)
+PREM --> SCORER : '{"score": 1.0, "feedback": "Correct — accurately describes SSDT overwrite technique."}'
+SCORER --> QUIZ : Score(value=1.0, feedback="Correct...", correct_answer="...")
+
+== Logging ==
+QUIZ -> LOG : append(QuestionLog(type="conceptual", score=1.0,\n              model_used="premium", tokens_premium=320, ...))
+LOG -> LOG : flush to session_<timestamp>.json
+
+QUIZ --> User : Score: 1.0 — Correct!\nFeedback: Accurately describes SSDT overwrite technique.
+
+@enduml

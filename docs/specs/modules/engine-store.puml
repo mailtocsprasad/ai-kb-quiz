@@ -1,0 +1,26 @@
+@startuml engine-store
+skinparam classAttributeIconSize 0
+
+class VectorStore {
+  - _client : PersistentClient
+  - _col : Collection
+  --
+  + __init__(index_path: Path, collection_name: str)
+  + add(chunk_id: str, vector: list[float],\n      text: str, metadata: dict) : void
+  + delete(chunk_ids: list[str]) : void
+  + query(vector: list[float], top_k: int,\n        threshold: float) : list[dict]
+  + close() : void
+  + __enter__() : VectorStore
+  + __exit__(*_) : void
+}
+
+note right of VectorStore
+  Backend: ChromaDB PersistentClient
+  Index space: cosine (HNSW)
+  Converts distance → similarity:
+    score = 1.0 - dist
+  Empty-collection guard in query()
+  Context manager for handle cleanup
+end note
+
+@enduml

@@ -21,6 +21,12 @@ logs/
 # Local config (copy from config.example.yaml)
 config/config.yaml
 
+# Git worktrees
+.worktrees/
+
+# Design analysis docs (local working notes, not for repo)
+docs/superpowers/specs/*-critical-thinking-analysis.md
+
 # OS
 .DS_Store
 Thumbs.db

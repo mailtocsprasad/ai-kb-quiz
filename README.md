@@ -1,6 +1,6 @@
 # ai-kb-quiz
 
-> A showcase of hybrid multi-model AI engineering patterns applied to a knowledge base quiz app.
+> A hybrid multi-model AI quiz app grounded in a vectorized knowledge base.
 
 ## What it demonstrates
 
@@ -71,13 +71,28 @@ See [`docs/specs/`](docs/specs/) for the full ADD + ATAM design.
 
 ## Status
 
-- [ ] Design spec (ADD + ATAM)
-- [ ] User stories
-- [ ] Engine core (retriever, PTC, Programmable Tool Calling, router, quiz)
-- [ ] CLI
-- [ ] Tests
-- [ ] KB content
-- [ ] Pattern docs
+**Current phase: Implementation** — Design is complete. TDD implementation in progress (14 tasks, subagent-driven). Tests are written before each module and verified to fail before implementation.
+
+| Milestone | Status |
+|-----------|--------|
+| User stories (Epics 1–10, Gherkin) | ✅ Done |
+| KB content (8 original-content files) | ✅ Done |
+| Design spec (ADD + ATAM) | ✅ Done |
+| Pattern docs (PTC, Programmable Tool Calling) | ⏳ Pending |
+| Project scaffold (requirements, pyproject, conftest) | ✅ Done |
+| `engine/question.py` — core data types | ✅ Done (11 tests) |
+| `engine/router.py` — hybrid model routing | ✅ Done (11 tests) |
+| `engine/chunker.py` — markdown chunker | ⏳ In progress |
+| `engine/scorer.py` — answer scoring | ⏳ Pending |
+| `engine/session_log.py` — session logger | ⏳ Pending |
+| `engine/ptc.py` — PTC pipeline | ⏳ Pending |
+| `engine/sandbox.py` — RestrictedPython sandbox | ⏳ Pending |
+| `engine/models/` — model adapters | ⏳ Pending |
+| `engine/prog_tool_calling.py` — Programmable Tool Calling | ⏳ Pending |
+| `engine/retriever.py` — KB semantic search | ⏳ Pending |
+| `engine/indexer.py` — KB vector indexer | ⏳ Pending |
+| `engine/quiz.py` — quiz orchestrator | ⏳ Pending |
+| `cli/main.py` — CLI | ⏳ Pending |
 
 ## License
 
