@@ -27,6 +27,12 @@ python cli/main.py kb index
 # Run a quiz
 python cli/main.py quiz --topic "EDR architecture"
 
+# Learn about a topic before quizzing (local model by default)
+python cli/main.py kb learn "EDR architecture"
+
+# Learn with a deeper premium-model explanation
+python cli/main.py kb learn "IRQL levels" --depth deep
+
 # View cross-session score summary
 python cli/main.py quiz stats
 
@@ -151,7 +157,7 @@ See [`docs/specs/`](docs/specs/) for the full ADD + ATAM design and
 - [ ] `engine/models/` — ModelAdapter protocol, MockAdapter, Ollama, Anthropic SDK
 - [ ] `engine/prog_tool_calling.py` — Programmable Tool Calling: model-generated scripts + sandbox exec
 - [ ] `engine/quiz.py` — quiz session orchestrator
-- [ ] `cli/main.py` — CLI (`quiz`, `kb index`, `kb search`, `quiz stats` subcommands)
+- [ ] `cli/main.py` — CLI (`quiz`, `kb index`, `kb search`, `kb learn`, `quiz stats` subcommands)
 - [ ] Scorer calibration — golden eval test set [P0]
 - [ ] SeenChunks cross-session deduplication [P1]
 - [ ] Ollama fallback routing + auto-index on first run [P1]

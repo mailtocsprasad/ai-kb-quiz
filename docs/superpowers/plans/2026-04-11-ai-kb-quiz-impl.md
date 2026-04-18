@@ -14,6 +14,41 @@
 
 ---
 
+## User Story → Task Mapping
+
+Each task implements one or more Gherkin user stories from `docs/user-stories/`.
+When implementing a module, add a one-line docstring referencing the story ID (e.g., `# Story 2.1`).
+
+| Task | Module | User Story |
+|------|--------|------------|
+| 1 | Project scaffold | Epic 1 — Configuration & Model Setup |
+| 2 | `engine/question.py` | All epics — shared data types |
+| 3 | `engine/router.py` | Story 1.1 — Configure model mode, Story 5.1 — Route by task type |
+| 4 | `engine/chunker.py` | Story 8.1 — Chunk KB files at H2/H3 boundaries |
+| 5 | `engine/store.py` | Story 8.2 — Store and query vectors |
+| 6 | `engine/manifest.py` | Story 8.3 — Incremental index (detect changed files) |
+| 7 | `engine/context_cache.py` | Story 8.3 — Contextual embedding with SHA-256 dedup |
+| 8 | `engine/indexer.py` | Story 8.1–8.3 — Full and incremental KB indexing |
+| 9 | `engine/retriever.py` | Story 2.1 — Retrieve relevant KB chunks |
+| 10 | `engine/scorer.py` | Story 6.1 — Score fill-in (difflib), Story 6.1 — Score conceptual/code (model eval) |
+| 11 | `engine/session_log.py` | Story 9.1 — Per-question JSON session log |
+| 12 | `engine/ptc.py` + scripts | Story 3.1 — PTC compression pipeline |
+| 13 | `engine/sandbox.py` | Story 4.1 — Sandbox model-generated scripts |
+| 14 | `engine/models/` | Story 1.1–1.2 — ModelAdapter, LocalAdapter (Ollama), PremiumAdapter (Anthropic) |
+| 15 | `engine/prog_tool_calling.py` | Story 4.1 — Programmable Tool Calling with fallback |
+| 16 | `engine/quiz.py` | Story 6.1–6.3 — Quiz session orchestration |
+| 17 | `cli/main.py` | Story 6.1, 7.1–7.4, 8.1, 10.1–10.5 — All CLI commands |
+
+**Implementation convention:** Every module-level docstring must cite its user story, e.g.:
+```python
+"""Answer scorer for quiz sessions.
+
+User story: 6.1 — Score fill-in answers via difflib; conceptual/code via model eval.
+"""
+```
+
+---
+
 ## File Map
 
 ```
@@ -2677,6 +2712,8 @@ git commit -m "feat: quiz session orchestrator — full pipeline with DI"
 
 ## Task 14: CLI (`cli/main.py`)
 
+**User Story:** 6.1–6.3 (quiz), 7.1–7.4 (kb management + learn), 10.1–10.5 (e2e journeys)
+
 **Files:**
 - Create: `cli/main.py`
 - Create: `tests/e2e/test_cli.py`
@@ -2748,6 +2785,43 @@ def test_kb_search_no_index(tmp_path, monkeypatch):
         "logging:\n  enabled: true\n  log_dir: logs/\n  log_compression_ratio: true\n")
     result = runner.invoke(app, ["kb", "search", "SSDT"])
     assert "Index is empty" in result.output or result.exit_code != 0
+
+
+def test_kb_learn_no_index(tmp_path, monkeypatch):
+    """Story 7.4: kb learn exits cleanly when index is not built."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "config.yaml").write_text(
+        "mode: local\nlocal_model: phi4-mini\n"
+        "premium_model: claude-sonnet-4-6\napi_key_file: Claude-Key.txt\n"
+        "embedding_model: all-MiniLM-L6-v2\n"
+        "quiz:\n  default_questions: 5\n  max_questions: 20\n"
+        "  show_correct_answer: true\n  show_kb_excerpt: true\n"
+        "retriever:\n  top_k: 5\n  min_score: 0.25\n"
+        "ptc:\n  max_output_tokens: 1000\n"
+        "prog_tool_calling:\n  sandbox_timeout_sec: 10\n"
+        "logging:\n  enabled: true\n  log_dir: logs/\n  log_compression_ratio: true\n"
+    )
+    result = runner.invoke(app, ["kb", "learn", "SSDT"])
+    assert "Index is empty" in result.output or result.exit_code != 0
+
+
+def test_kb_learn_no_content(tmp_path, monkeypatch):
+    """Story 7.4: kb learn prints friendly message when topic not in KB."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "config.yaml").write_text(
+        "mode: local\nlocal_model: phi4-mini\n"
+        "premium_model: claude-sonnet-4-6\napi_key_file: Claude-Key.txt\n"
+        "embedding_model: all-MiniLM-L6-v2\n"
+        "quiz:\n  default_questions: 5\n  max_questions: 20\n"
+        "  show_correct_answer: true\n  show_kb_excerpt: true\n"
+        "retriever:\n  top_k: 5\n  min_score: 0.25\n"
+        "ptc:\n  max_output_tokens: 1000\n"
+        "prog_tool_calling:\n  sandbox_timeout_sec: 10\n"
+        "logging:\n  enabled: true\n  log_dir: logs/\n  log_compression_ratio: true\n"
+    )
+    (tmp_path / "kb_index").mkdir()
+    result = runner.invoke(app, ["kb", "learn", "quantum computing"])
+    assert "No KB content" in result.output or result.exit_code == 0
 ```
 
 - [ ] **Step 2: Run tests — verify they fail**
@@ -2859,7 +2933,10 @@ def kb_remove(filename: str = typer.Argument(..., help="Filename to remove from 
 @kb_app.command("search")
 def kb_search(query: str = typer.Argument(...),
               top: int = typer.Option(5, "--top", help="Number of results")):
-    """Semantic search over the KB."""
+    """Semantic search over the KB.
+
+    User story: 2.1 — Retrieve relevant KB chunks by semantic similarity.
+    """
     import numpy as np
     from engine.retriever import Retriever, IndexNotFoundError
     from sentence_transformers import SentenceTransformer
@@ -2878,6 +2955,85 @@ def kb_search(query: str = typer.Argument(...),
     for i, r in enumerate(results, 1):
         typer.echo(f"\n[{i}] score={r.score:.3f} | {r.chunk.source_file} — {r.chunk.heading}")
         typer.echo(f"    {r.chunk.text[:200]}...")
+
+
+@kb_app.command("learn")
+def kb_learn(
+    topic: str = typer.Argument(..., help="Topic to learn about"),
+    depth: str = typer.Option("shallow", "--depth", help="shallow (local) or deep (premium)"),
+    top: int = typer.Option(5, "--top", help="Number of KB chunks to retrieve"),
+):
+    """Get a structured explanation of a KB topic.
+
+    User story: 7.4 — Learn about a KB topic before or after a quiz session.
+    Retrieves relevant chunks, compresses via PTC, and asks the model to generate
+    a structured breakdown: Overview, Key Concepts, Relationships, Sources.
+    """
+    import numpy as np
+    from engine.retriever import Retriever, IndexNotFoundError
+    from engine.ptc import compress
+    from engine.router import route
+    from engine.models.local_adapter import LocalAdapter
+    from engine.models.premium_adapter import PremiumAdapter
+    from sentence_transformers import SentenceTransformer
+
+    cfg = _load_config()
+    try:
+        retriever = Retriever(index_dir=Path("kb_index"))
+    except IndexNotFoundError:
+        typer.echo("Index is empty. Run: python cli/main.py kb index")
+        raise typer.Exit(code=1)
+
+    st_model = SentenceTransformer(cfg.get("embedding_model", "all-MiniLM-L6-v2"))
+    query_vec = np.array(st_model.encode(topic), dtype=np.float32)
+    results = retriever.search_by_vector(query_vec, top_k=top, min_score=0.1)
+    if not results:
+        typer.echo(f"No KB content found for '{topic}'.")
+        raise typer.Exit(code=0)
+
+    chunks = [r.chunk for r in results]
+    ptc_result = compress(chunks, task_type="extract_concepts")
+
+    mode = cfg.get("mode", "hybrid")
+    effective_mode = "premium" if depth == "deep" else "local"
+    destination = route("generate_question", "conceptual", effective_mode)
+
+    local = LocalAdapter(model=cfg.get("local_model", "phi4-mini"))
+    if destination == "premium":
+        try:
+            adapter = PremiumAdapter.from_config(
+                model=cfg.get("premium_model", "claude-sonnet-4-6"),
+                api_key_file=Path(cfg.get("api_key_file", "Claude-Key.txt")),
+            )
+        except EnvironmentError:
+            typer.echo("Premium model unavailable — falling back to local.")
+            adapter = local
+    else:
+        adapter = local
+
+    sources = sorted({c.source_file for c in chunks})
+    headings = [f"  • {c.source_file} › {c.heading}" for c in chunks]
+
+    prompt = (
+        f"You are a technical teacher. A user wants to learn about: '{topic}'\n\n"
+        f"Based on the following KB content, produce a structured explanation with these sections:\n"
+        f"1. Overview (2-3 sentences)\n"
+        f"2. Key Concepts (bullet list: term — one-line definition)\n"
+        f"3. How They Connect (2-3 sentences on relationships)\n\n"
+        f"Be concise and precise. Use only what is in the KB content below.\n\n"
+        f"KB content:\n{ptc_result.compressed_text}"
+    )
+    explanation = adapter.generate(prompt)
+
+    typer.echo(f"\n{'='*60}")
+    typer.echo(f"  Topic: {topic}")
+    typer.echo(f"{'='*60}\n")
+    typer.echo(explanation)
+    typer.echo(f"\n{'─'*60}")
+    typer.echo("Sources:")
+    for h in headings:
+        typer.echo(h)
+    typer.echo(f"\nQuiz yourself: python cli/main.py quiz --topic '{topic}'")
 
 
 @app.command("quiz")
@@ -3013,7 +3169,7 @@ In `README.md`, mark these milestones done:
 
 ```bash
 git add cli/main.py tests/e2e/test_cli.py README.md
-git commit -m "feat: Typer CLI — quiz, kb index/add/remove/list/search"
+git commit -m "feat: Typer CLI — quiz, kb index/add/remove/list/search/learn"
 git push
 ```
 

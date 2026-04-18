@@ -52,3 +52,45 @@ Feature: KB content management
     And on confirmation the file is deleted
     And its vectors are removed from the index without requiring a full rebuild
 ```
+
+## Story 7.4 — Learn about a KB topic
+
+```gherkin
+Feature: Topic learning from KB
+  As a user
+  I want to get a structured explanation of a KB topic
+  So that I can study before a quiz or review topics I missed afterwards
+
+  Scenario: Learn about a known topic (local mode)
+    Given the KB index is built
+    And config.yaml sets mode to "local" or "hybrid"
+    And the topic is "EDR architecture"
+    When I run: python cli/main.py kb learn "EDR architecture"
+    Then I see a structured breakdown:
+      - Overview: 2-3 sentence summary of the topic
+      - Key Concepts: bullet list of key terms with brief definitions
+      - Relationships: how the concepts connect to each other
+      - Sources: KB files and headings where the content comes from
+    And a tip at the end shows:
+      "Quiz yourself: python cli/main.py quiz --topic 'EDR architecture'"
+
+  Scenario: Deep explanation using premium model
+    Given config.yaml sets mode to "hybrid" or "premium"
+    When I run: python cli/main.py kb learn "IRQL levels" --depth deep
+    Then the premium model generates a richer explanation
+    And the output cross-references related KB topics where relevant
+    And the structured sections are more detailed than shallow mode
+
+  Scenario: Learn about a topic not in the KB
+    Given the KB index is built
+    And the topic is "quantum computing"
+    When I run: python cli/main.py kb learn "quantum computing"
+    Then the CLI prints "No KB content found for 'quantum computing'"
+    And exits cleanly without error
+
+  Scenario: KB index not built
+    Given the KB index does not exist
+    When I run: python cli/main.py kb learn "SSDT"
+    Then the CLI prints "Index is empty. Run: python cli/main.py kb index"
+    And exits with a non-zero code
+```
