@@ -19,25 +19,27 @@
 Each task implements one or more Gherkin user stories from `docs/user-stories/`.
 When implementing a module, add a one-line docstring referencing the story ID (e.g., `# Story 2.1`).
 
-| Task | Module | User Story |
-|------|--------|------------|
-| 1 | Project scaffold | Epic 1 — Configuration & Model Setup |
-| 2 | `engine/question.py` | All epics — shared data types |
-| 3 | `engine/router.py` | Story 1.1 — Configure model mode, Story 5.1 — Route by task type |
-| 4 | `engine/chunker.py` | Story 8.1 — Chunk KB files at H2/H3 boundaries |
-| 5 | `engine/store.py` | Story 8.2 — Store and query vectors |
-| 6 | `engine/manifest.py` | Story 8.3 — Incremental index (detect changed files) |
-| 7 | `engine/context_cache.py` | Story 8.3 — Contextual embedding with SHA-256 dedup |
-| 8 | `engine/indexer.py` | Story 8.1–8.3 — Full and incremental KB indexing |
-| 9 | `engine/retriever.py` | Story 2.1 — Retrieve relevant KB chunks |
-| 10 | `engine/scorer.py` | Story 6.1 — Score fill-in (difflib), Story 6.1 — Score conceptual/code (model eval) |
-| 11 | `engine/session_log.py` | Story 9.1 — Per-question JSON session log |
-| 12 | `engine/ptc.py` + scripts | Story 3.1 — PTC compression pipeline |
-| 13 | `engine/sandbox.py` | Story 4.1 — Sandbox model-generated scripts |
-| 14 | `engine/models/` | Story 1.1–1.2 — ModelAdapter, LocalAdapter (Ollama), PremiumAdapter (Anthropic) |
-| 15 | `engine/prog_tool_calling.py` | Story 4.1 — Programmable Tool Calling with fallback |
-| 16 | `engine/quiz.py` | Story 6.1–6.3 — Quiz session orchestration |
-| 17 | `cli/main.py` | Story 6.1, 7.1–7.4, 8.1, 10.1–10.5 — All CLI commands |
+| Task | Status | Module | User Story |
+|------|--------|--------|------------|
+| 1 | ✅ Done | Project scaffold | Epic 1 — Configuration & Model Setup |
+| 2 | ✅ Done | `engine/question.py` | All epics — shared data types |
+| 3 | ✅ Done | `engine/router.py` | Story 1.1 — Configure model mode, Story 5.1 — Route by task type |
+| 4 | ✅ Done | `engine/chunker.py` | Story 8.1 — Chunk KB files at H2/H3 boundaries |
+| 5 | ✅ Done | `engine/store.py` | Story 8.2 — Store and query vectors |
+| 6 | ✅ Done | `engine/manifest.py` | Story 8.3 — Incremental index (detect changed files) |
+| 7 | ✅ Done | `engine/context_cache.py` | Story 8.3 — Contextual embedding with SHA-256 dedup |
+| 8 | ✅ Done | `engine/indexer.py` | Story 8.1–8.3 — Full and incremental KB indexing |
+| 9 | ✅ Done | `engine/retriever.py` | Story 2.1 — Retrieve relevant KB chunks |
+| 10 | ⬜ Pending | `engine/scorer.py` | Story 6.1 — Score fill-in (difflib) and conceptual/code (model eval) |
+| 11 | ⬜ Pending | `engine/session_log.py` | Story 9.1 — Per-question JSON session log |
+| 12 | ⬜ Pending | `engine/ptc.py` + scripts | Story 3.1 — PTC compression pipeline |
+| 13 | ⬜ Pending | `engine/sandbox.py` | Story 4.1 — Sandbox model-generated scripts |
+| 14 | ⬜ Pending | `engine/models/` | Story 1.1–1.2 — ModelAdapter, LocalAdapter, PremiumAdapter |
+| 15 | ⬜ Pending | `engine/prog_tool_calling.py` | Story 4.1 — Programmable Tool Calling with fallback |
+| 16 | ⬜ Pending | `engine/quiz.py` | Story 6.1–6.3 — Quiz session orchestration |
+| 17 | ⬜ Pending | `cli/main.py` | Story 6.1, 7.1–7.4, 8.1, 10.1–10.5 — All CLI commands |
+| ~~11~~ | ❌ Superseded | ~~numpy retriever~~ | Replaced by Task 9 (ChromaDB) |
+| ~~12~~ | ❌ Superseded | ~~numpy indexer~~ | Replaced by Task 8 (ChromaDB) |
 
 **Implementation convention:** Every module-level docstring must cite its user story, e.g.:
 ```python
@@ -1085,6 +1087,8 @@ git commit -m "feat: Retriever — ChromaDB semantic search, top-N sampling, See
 
 ## Task 10: Answer Scorer (`engine/scorer.py`)
 
+**User Story:** 6.1 — Score fill-in answers via difflib exact/fuzzy match; score conceptual and code answers via model eval returning `{"score": 0|0.5|1.0, "feedback": "..."}`.
+
 **Files:**
 - Create: `engine/scorer.py`
 - Create: `tests/unit/test_scorer.py`
@@ -1223,7 +1227,9 @@ git commit -m "feat: answer scorer — difflib for fill_in, model eval for conce
 
 ---
 
-## Task 6: Session Logger (`engine/session_log.py`)
+## Task 11: Session Logger (`engine/session_log.py`)
+
+**User Story:** 9.1 — Per-question JSON session log flushed after every answer (crash-safe). Records question type, user answer, score, model used, token counts, and PTC compression ratio.
 
 **Files:**
 - Create: `engine/session_log.py`
@@ -1367,7 +1373,9 @@ git commit -m "feat: session logger — per-question JSON flush, crash-safe"
 
 ---
 
-## Task 7: PTC Pipeline (`engine/ptc_scripts/` + `engine/ptc.py`)
+## Task 12: PTC Pipeline (`engine/ptc_scripts/` + `engine/ptc.py`)
+
+**User Story:** 3.1 — Developer-authored extraction scripts compress raw KB chunks before any model call. Raw KB text never reaches a model — only the compressed PTCResult does.
 
 **Files:**
 - Create: `engine/ptc_scripts/summarize_chunk.py`
@@ -1587,7 +1595,9 @@ git commit -m "feat: PTC pipeline — developer-authored extraction scripts"
 
 ---
 
-## Task 8: Sandbox (`engine/sandbox.py`)
+## Task 13: Sandbox (`engine/sandbox.py`)
+
+**User Story:** 4.1 — Sandbox validates and executes model-generated scripts via RestrictedPython AST. Blocks dangerous imports (`os`, `subprocess`, `open`, etc.). Script receives `data` string, must set `output` variable.
 
 **Files:**
 - Create: `engine/sandbox.py`
@@ -1767,7 +1777,9 @@ git commit -m "feat: sandbox — RestrictedPython AST validation + DirectRunner"
 
 ---
 
-## Task 9: Model Adapters (`engine/models/`)
+## Task 14: Model Adapters (`engine/models/`)
+
+**User Story:** 1.1 — Route to local (Ollama) or premium (Anthropic) model via a shared `ModelAdapter` Protocol. 1.2 — API key resolved from env var first, then `api_key_file`; raises `EnvironmentError` if neither found.
 
 **Files:**
 - Create: `engine/models/adapter.py`
@@ -1968,7 +1980,9 @@ git commit -m "feat: model adapters — LocalAdapter (Ollama), PremiumAdapter (A
 
 ---
 
-## Task 10: Programmable Tool Calling (`engine/prog_tool_calling.py`)
+## Task 15: Programmable Tool Calling (`engine/prog_tool_calling.py`)
+
+**User Story:** 4.1 — Premium model generates a Python script at runtime to extract information from compressed KB context. Script is validated and executed in the sandbox. On validation failure or execution error, falls back to `ptc_result.compressed_text` (`fallback_used=True`).
 
 **Files:**
 - Create: `engine/prog_tool_calling.py`
@@ -2107,13 +2121,15 @@ git commit -m "feat: Programmable Tool Calling — model-generated scripts with 
 
 ---
 
-## Task 11: KB Retriever (`engine/retriever.py`)
+## ~~Task 11~~: KB Retriever — numpy [SUPERSEDED]
 
-**Files:**
-- Create: `engine/retriever.py`
-- Create: `tests/integration/test_retriever.py`
+> **This task was superseded before implementation.** Task 9 (Retriever, ChromaDB) replaced this numpy-based design. The ChromaDB version is already implemented and tested. Skip this section entirely.
 
-- [ ] **Step 1: Write failing tests**
+**Original files (not built):**
+- `engine/retriever.py` — numpy cosine similarity over `vectors.npy`
+- `tests/integration/test_retriever.py` — `search_by_vector()` tests
+
+~~**Step 1: Write failing tests**~~
 
 ```python
 # tests/integration/test_retriever.py
@@ -2257,13 +2273,15 @@ git commit -m "feat: KB retriever — cosine similarity search over numpy index"
 
 ---
 
-## Task 12: KB Indexer (`engine/indexer.py`)
+## ~~Task 12~~: KB Indexer — numpy [SUPERSEDED]
 
-**Files:**
-- Create: `engine/indexer.py`
-- Create: `tests/integration/test_indexer.py`
+> **This task was superseded before implementation.** Task 8 (Indexer, ChromaDB) replaced this numpy-based design. The ChromaDB version is already implemented and tested. Skip this section entirely.
 
-- [ ] **Step 1: Write failing tests**
+**Original files (not built):**
+- `engine/indexer.py` — numpy-based incremental indexer writing `vectors.npy`
+- `tests/integration/test_indexer.py` — `build()` stats tests
+
+~~**Step 1: Write failing tests**~~
 
 ```python
 # tests/integration/test_indexer.py
@@ -2474,7 +2492,9 @@ git commit -m "feat: KB indexer — incremental build, mtime detection, atomic s
 
 ---
 
-## Task 13: Quiz Orchestrator (`engine/quiz.py`)
+## Task 16: Quiz Orchestrator (`engine/quiz.py`)
+
+**User Story:** 6.1 — Generate questions from KB chunks via PTC + model. 6.2 — Configurable question count and types. 6.3 — End-of-session summary with total score, token savings, and models used. All external dependencies injected (retriever, embedder, adapters, sandbox, log_dir).
 
 **Files:**
 - Create: `engine/quiz.py`
@@ -2710,7 +2730,7 @@ git commit -m "feat: quiz session orchestrator — full pipeline with DI"
 
 ---
 
-## Task 14: CLI (`cli/main.py`)
+## Task 17: CLI (`cli/main.py`)
 
 **User Story:** 6.1–6.3 (quiz), 7.1–7.4 (kb management + learn), 10.1–10.5 (e2e journeys)
 
