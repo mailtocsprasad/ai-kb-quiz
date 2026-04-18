@@ -9,19 +9,25 @@ mode: hybrid
 #
 # Install Ollama first: winget install Ollama.Ollama
 #
-# CPU-only model guide (no GPU required):
+# GPU model guide (discrete GPU with 8–16 GB VRAM):
 #
-#   Model                RAM    i7-1165G7 (4-core)  M1 Pro 16GB   Best for
-#   ─────────────────────────────────────────────────────────────────────────
-#   phi4-mini (3.8B Q4)  ~3.5GB  ✅ ~8–12 t/s        ✅ fast       Reasoning, code ← recommended
-#   llama3.2:3b  (Q4)    ~3.0GB  ✅ ~10–14 t/s       ✅ fast       General fallback
-#   gemma3:4b    (Q4)    ~4.0GB  ✅ ~7–10 t/s        ✅ good       Document understanding
-#   qwen2.5-coder:7b(Q4) ~5.5GB  ⚠️  ~3–5 t/s        ✅ good       Code-heavy KB topics
-#   mistral:7b   (Q4)    ~5.5GB  ⚠️  ~3–5 t/s        ✅ good       General (fine-tuning friendly)
-#   phi-4 (14B Q4)       ~9.5GB  ❌  too slow         ✅ ~6 t/s     M1 Pro only
+#   Model              VRAM     Best for
+#   ────────────────────────────────────────────────────────────
+#   qwen2.5:14b  (Q4)  ~8.7 GB  Technical reasoning ← recommended
+#   phi4:14b     (Q4)  ~8.5 GB  Structured output, JSON, scoring
+#   llama3.1:8b  (Q4)  ~4.7 GB  Fastest local tier, general fallback
 #
-# Recommended for MSI Modern 14 (i7-1165G7, 16GB, no discrete GPU): phi4-mini
-local_model: phi4-mini
+# CPU-only model guide (no discrete GPU):
+#
+#   Model                RAM      Best for
+#   ─────────────────────────────────────────────────────────────
+#   phi4-mini (3.8B Q4)  ~3.5 GB  Reasoning, code ← recommended
+#   llama3.2:3b  (Q4)    ~3.0 GB  General fallback
+#   gemma3:4b    (Q4)    ~4.0 GB  Document understanding
+#   qwen2.5-coder:7b(Q4) ~5.5 GB  Code-heavy KB topics
+#   mistral:7b   (Q4)    ~5.5 GB  General (fine-tuning friendly)
+#
+local_model: qwen2.5:14b
 
 # Premium model (Anthropic Claude)
 premium_model: claude-sonnet-4-6
@@ -29,11 +35,25 @@ premium_model: claude-sonnet-4-6
 # API key resolution — tried in order, first match wins:
 #   1. ANTHROPIC_API_KEY environment variable
 #   2. api_key_file path below (gitignored, never committed)
-# To reuse the key from ai-kd, set: C:\Code\ai-kd\Claude-Key.txt
+# Claude-Key.txt is copied locally and gitignored — never committed.
 api_key_file: Claude-Key.txt
 
-# Embedding model for KB vector index (local, CPU-friendly)
-embedding_model: all-MiniLM-L6-v2
+# Embedding backend and model for KB vector index
+#
+# embedding_backend:
+#   "ollama"                — served via Ollama /api/embeddings (recommended if Ollama installed)
+#   "sentence-transformers" — runs via sentence-transformers Python library (no Ollama needed)
+#
+# Ollama embedding models (pull with: ollama pull <model>):
+#   nomic-embed-text   768-dim, strong semantic quality  ← recommended
+#   all-minilm         384-dim, fast and lightweight
+#   qwen3-embedding    1024-dim, highest quality
+#
+# sentence-transformers models (auto-downloaded from HuggingFace on first run):
+#   all-MiniLM-L6-v2   384-dim, CPU-friendly fallback
+#
+embedding_backend: ollama
+embedding_model: nomic-embed-text
 
 # Quiz settings
 quiz:

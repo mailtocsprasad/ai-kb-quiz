@@ -1,0 +1,27 @@
+flowchart LR
+  USER(["User"])
+
+  subgraph INDEX["Index  (one-time)"]
+    direction LR
+    KB[KB\n.md files] --> CHK[Chunker] --> EMB[Embedder\nOllama / ST] --> VDB[(VectorDB\nChromaDB)]
+  end
+
+  subgraph QUIZ["Quiz  (per session)"]
+    direction LR
+    RET[Retriever] -->|3. compress| PTC[PTC\nCompress]
+    PTC -->|4. route| ROUTER[Router]
+    ROUTER -->|5a. fill-in| LOCAL[Local\nOllama]
+    ROUTER -->|5b. conceptual\n/ code| PREM[Premium\nClaude]
+    LOCAL -->|6. question| USER
+    PREM  -->|6. question| USER
+    LOCAL --> SCORER[Scorer]
+    PREM  --> SCORER
+  end
+
+  USER   -->|1. topic| RET
+  VDB    -->|2. search| RET
+  USER   -->|7. answer| SCORER
+  SCORER -->|8. score + feedback| USER
+
+  note1[/"Raw KB text never\nreaches any model"/]
+  PTC -.-> note1

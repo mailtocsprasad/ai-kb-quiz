@@ -13,12 +13,13 @@ alt index_dir does not exist
 end
 
 RET -> EMB : encode("SSDT hooking")
-EMB --> RET : query_vector[384]
+EMB --> RET : query_vector[N]
+note right : N = embedding model dimension
 
-RET -> VS : query(query_vector, top_k=5, threshold=0.6)
+RET -> VS : query(query_vector, n_results=top_n)
 VS --> RET : [{chunk, score, file, heading}, ...]
 
-RET -> RET : map each dict → Chunk(text, source_file, heading)\nsort by score descending
+RET -> RET : filter score >= threshold\nsample top_k from candidates\nmap each dict → Chunk(text, source_file, heading)
 
 RET --> QO : [Chunk("The SSDT maps syscall...", "windows-internals.md", "SSDT Hooking"), ...]
 

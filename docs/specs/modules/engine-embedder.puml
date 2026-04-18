@@ -1,0 +1,56 @@
+@startuml engine-embedder
+skinparam classAttributeIconSize 0
+
+interface EmbedFn <<Callable>> {
+  + __call__(text: str) : list[float]
+}
+
+class make_embed_fn <<factory>> {
+  + make_embed_fn(model: str,
+  + ..backend: str,
+  + ..ollama_base_url: str) : EmbedFn
+}
+
+class OllamaEmbedFn <<closure>> {
+  - model : str
+  - url : str
+  --
+  + __call__(text: str) : list[float]
+}
+
+class SentenceTransformerEmbedFn <<closure>> {
+  - _st : SentenceTransformer
+  --
+  + __call__(text: str) : list[float]
+}
+
+make_embed_fn ..> OllamaEmbedFn           : backend="ollama"
+make_embed_fn ..> SentenceTransformerEmbedFn : backend="sentence-transformers"
+make_embed_fn ..> EmbedFn                 : returns
+
+OllamaEmbedFn             ..|> EmbedFn
+SentenceTransformerEmbedFn ..|> EmbedFn
+
+note right of OllamaEmbedFn
+  Calls Ollama POST /api/embeddings
+  via httpx. Requires Ollama running.
+  Models: nomic-embed-text (768-dim),
+  all-minilm (384-dim),
+  qwen3-embedding (1024-dim).
+end note
+
+note right of SentenceTransformerEmbedFn
+  Runs SentenceTransformer in-process.
+  No Ollama required.
+  Model: all-MiniLM-L6-v2 (384-dim).
+end note
+
+note bottom of make_embed_fn
+  Injected into Indexer and Retriever.
+  Both must use the same model + backend
+  to ensure dimension alignment.
+  See ATAM R5: model change without
+  index rebuild corrupts vectors silently.
+end note
+
+@enduml

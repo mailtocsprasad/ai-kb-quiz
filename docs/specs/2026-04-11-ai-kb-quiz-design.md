@@ -46,7 +46,7 @@ Phase 1: CLI. Phase 2: Web UI (interface layer only — engine unchanged).
 ### 2.3 Constraints
 
 - Python 3.x; no C++ compilation required
-- Local model via Ollama HTTP API (CPU-only, no GPU)
+- Local model via Ollama HTTP API; GPU-accelerated where available, CPU fallback otherwise
 - API key: `ANTHROPIC_API_KEY` env var first, then `api_key_file` path in config
 - Only original-content KB files in public repo
 - All components testable in isolation via dependency injection
@@ -74,7 +74,8 @@ Phase 1: CLI. Phase 2: Web UI (interface layer only — engine unchanged).
 
 | Element | Responsibility |
 |---------|---------------|
-| `config/config.yaml` | Declares mode, local_model, premium_model, api_key_file, quiz/retriever/ptc settings |
+| `config/config.yaml` | Declares mode, local_model, premium_model, embedding_model, embedding_backend, api_key_file, quiz/retriever/ptc settings |
+| `engine/embedder.py` | `make_embed_fn(model, backend, ollama_base_url) → EmbedFn`. Factory that returns an `EmbedFn` backed by either Ollama `/api/embeddings` or `sentence-transformers`. Injected into `Indexer` and `Retriever`. |
 | `kb/` | Original-content markdown KB files. Versioned in repo. |
 | `engine/retriever.py` | Semantic search over vector index. Returns top-K `Chunk` objects above similarity threshold. |
 | `engine/ptc.py` | Runs developer-authored extraction scripts against KB chunks. Returns `PTCResult`. Never calls a model. |
@@ -94,9 +95,11 @@ Phase 1: CLI. Phase 2: Web UI (interface layer only — engine unchanged).
 | Decision | Rationale | Discarded Alternatives |
 |----------|-----------|----------------------|
 | PTC generates+executes scripts dynamically | Keeps premium model input small regardless of KB size | Pre-summarize chunks (still a model call); truncate chunks (lossy) |
-| Ollama HTTP API for local (not llama.cpp bindings) | Model-agnostic, swappable by config name, no compilation, CPU-native | llama.cpp Python bindings (model-specific build steps) |
+| Ollama HTTP API for local (not llama.cpp bindings) | Model-agnostic, swappable by config name, no compilation; GPU-accelerated automatically when available | llama.cpp Python bindings (model-specific build steps) |
 | `ModelAdapter` interface `generate(prompt) -> str` | Both adapters mockable; router never touches SDK | Direct SDK calls in quiz.py (untestable, tightly coupled) |
 | Mode inferred from config (not runtime flag) | Same code runs in all three modes; works in automated/scripted use | CLI flags only (breaks scripted use) |
+| `embedding_backend` config field (`"ollama"` \| `"sentence-transformers"`) | Explicit over magic auto-detection; Ollama preferred when installed (no extra Python dep, higher-quality models) | Auto-detect by model name (ambiguous — `nomic-embed-text` has no distinguishing prefix) |
+| `make_embed_fn` factory in `engine/embedder.py` | Swappable at construction time; CI uses `lambda s: [0.0]*N`; live uses real backend | Conditional import in indexer/retriever (logic scattered, untestable) |
 
 ---
 
@@ -152,7 +155,7 @@ Phase 1: CLI. Phase 2: Web UI (interface layer only — engine unchanged).
 | `engine/indexer.py` | Incremental index build: mtime comparison, embed only changed files, atomic swap (temp dir → rename). Accepts injected `EmbedFn`. |
 | `engine/retriever.py` | Loads index from injected `index_dir: Path`. Returns `List[Chunk]` sorted by cosine similarity. Raises `IndexNotFoundError` with instructions if missing. |
 | `engine/scorer.py` | `fill_in`: difflib fuzzy match. `conceptual`/`code`: delegates to model eval result. Returns `Score(value, feedback, correct_answer)`. |
-| `engine/session_log.py` | Accumulates `SessionLog`. Flushes to `log_dir/<session_id>.json` after each question. |
+| `engine/session_log.py` | Accumulates `SessionLog`. Flushes to `log_dir/<session_id>.json` after each question. Each entry includes `retrieval_scores` for observability of retrieval quality. |
 | `engine/quiz.py` | Orchestrates full session. All deps injected. Stateless between questions except accumulated log. |
 | `cli/main.py` | Typer CLI. Reads config, constructs engine with real adapters, delegates to quiz/kb commands. |
 
@@ -219,7 +222,7 @@ tests/
 
 | Decision | Rationale | Discarded Alternatives |
 |----------|-----------|----------------------|
-| `EmbedFn = Callable[[str], list[float]]` injected into indexer | Swap real model for `lambda s: [0.0]*384` in CI — no model download | Import sentence-transformers directly (slow CI) |
+| `EmbedFn = Callable[[str], list[float]]` injected into indexer | Swap real model for `lambda s: [0.0]*N` in CI — no model download, dimension-agnostic | Import sentence-transformers directly (slow CI, dimension-locked) |
 | `httpx.Client` injected into local_adapter | `httpx.MockTransport` — no Ollama in tests | `requests` + `responses` (extra dep) |
 | `anthropic.Anthropic` injected into premium_adapter | SDK supports httpx client injection | `unittest.mock.patch` at import (fragile) |
 | Per-question log flush | Crash resilience — partial data better than none | Single flush at session end (all lost on crash) |
@@ -275,6 +278,7 @@ Utility
 | R2 | New task type added without PTC script → silent uncompressed fallback | Performance | Startup validation: assert PTC script exists for every task type |
 | R3 | Ollama silent quality degradation (not a crash) | Performance, Observability | Log response token count + latency; surface anomalies in session summary |
 | R4 | Windows atomic rename of directory may fail if handles held | Modifiability | Write to `kb_index.tmp/`; use `os.replace()`; document limitation |
+| R5 | `embedding_model` or `embedding_backend` changed without index rebuild — dimension mismatch or stale vectors | Correctness, Modifiability | Store `embedding_model` and `embedding_backend` in `manifest.json` at index build time; detect mismatch on startup and raise `IndexStaleError` with rebuild instructions |
 
 ### Non-Risks
 
@@ -293,6 +297,8 @@ Utility
 | S1 | `min_score` retriever threshold | Too low → noisy chunks → poor questions. Too high → too few chunks. |
 | S2 | `sandbox_timeout_sec` | Too short → excessive fallback. Too long → session blocked. |
 | S3 | PTC `max_output_tokens` | Too low → over-compressed, loses context. Too high → token savings diminish. |
+| S4 | `top_n` / `top_k` ratio | With ~150 total chunks, a 20:5 ratio gives limited diversity. Too small a pool → same chunks every session. Ratio must scale with KB size. |
+| S5 | Embedding model domain fit | General-purpose embedders may not differentiate Windows kernel terminology (e.g., SSDT vs EPROCESS). Poor inter-chunk cosine variance → retrieval returns same cluster for all queries. Validate with a retrieval quality eval before release. |
 
 ### Tradeoff Points
 
@@ -309,6 +315,8 @@ Utility
 |-------|-------|--------------------------|
 | Silent quality degradation | R2, R3 | Poor quiz questions with no user-visible signal — undermines showcase value |
 | Windows-specific fragility | R4 | Atomic index swap and Job Object are Win32-specific; M1 Mac needs `DirectRunner` |
+| Index staleness | R5 | Embedding model change silently corrupts retrieval — all downstream quality degrades |
+| Retrieval feedback loop gap | S4, S5 | No signal path from poor question quality back to retrieval tuning; bad questions reinforce user disengagement with no corrective mechanism. Mitigation: log `retrieval_scores` in `QuestionLog`; add retrieval eval before release. |
 
 ---
 
@@ -318,22 +326,39 @@ Priority order (first match wins):
 1. `ANTHROPIC_API_KEY` environment variable
 2. `api_key_file` path from `config.yaml` (resolved relative to project root if relative)
 
-`Claude-Key.txt` is gitignored. Can be shared with `ai-kd` by setting:
+`Claude-Key.txt` is copied locally to the project root and gitignored — never committed. Default config points to the local copy:
 ```yaml
-api_key_file: C:\Code\ai-kd\Claude-Key.txt
+api_key_file: Claude-Key.txt
 ```
 
 ---
 
-## 8. Supported Local Models (CPU-only via Ollama)
+## 8. Supported Local Models (via Ollama)
 
-| Model | RAM | MSI Modern 14 | M1 Pro 16GB | Best for |
-|-------|-----|--------------|-------------|---------|
-| `phi4-mini` (3.8B Q4) | ~3–4 GB | ✅ Fast | ✅ Fast | Reasoning, code — recommended default |
-| `llama3.2:3b` (Q4) | ~3 GB | ✅ | ✅ | General fallback |
-| `gemma3:4b` (Q4) | ~4 GB | ✅ | ✅ | Document understanding |
-| `qwen2.5-coder:7b` (Q4) | ~5–6 GB | ⚠️ Slow | ✅ | Code-heavy KB topics |
-| `phi-4` (14B Q4) | ~9–10 GB | ❌ | ✅ | M1 Pro only |
+### GPU (8–16 GB VRAM)
+
+| Model | VRAM | Best for |
+|-------|------|---------|
+| `qwen2.5:14b` (Q4) | ~8.7 GB | Technical reasoning — recommended |
+| `phi4:14b` (Q4) | ~8.5 GB | Structured output, JSON, scoring |
+| `llama3.1:8b` (Q4) | ~4.7 GB | Fastest local tier, general fallback |
+
+### CPU-only (no discrete GPU)
+
+| Model | RAM | Best for |
+|-------|-----|---------|
+| `phi4-mini` (3.8B Q4) | ~3.5 GB | Reasoning, code — recommended |
+| `llama3.2:3b` (Q4) | ~3.0 GB | General fallback |
+| `gemma3:4b` (Q4) | ~4.0 GB | Document understanding |
+| `qwen2.5-coder:7b` (Q4) | ~5.5 GB | Code-heavy KB topics |
+
+### Embedding Models (Ollama)
+
+| Model | Dims | Best for |
+|-------|------|---------|
+| `nomic-embed-text` | 768 | Strong semantic quality — recommended |
+| `all-minilm` | 384 | Fast, lightweight |
+| `qwen3-embedding` | 1024 | Highest quality |
 
 ---
 

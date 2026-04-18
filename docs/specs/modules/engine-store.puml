@@ -5,13 +5,13 @@ class VectorStore {
   - _client : PersistentClient
   - _col : Collection
   --
-  + __init__(index_path: Path, collection_name: str)
-  + add(chunk_id: str, vector: list[float],\n      text: str, metadata: dict) : void
-  + delete(chunk_ids: list[str]) : void
-  + query(vector: list[float], top_k: int,\n        threshold: float) : list[dict]
-  + close() : void
-  + __enter__() : VectorStore
-  + __exit__(*_) : void
+  + __init__(persist_dir: Path,\n           collection_name: str = "kb_chunks")
+  + add(ids: list[str], embeddings: list[list[float]],\n      documents: list[str], metadatas: list[dict]) : void
+  + delete(ids: list[str]) : void
+  + delete_by_source(source_file: str) : void
+  + query(embedding: list[float],\n        n_results: int) : list[dict]
+  + count() : int
+  + get_ids() : list[str]
 }
 
 note right of VectorStore
@@ -19,8 +19,13 @@ note right of VectorStore
   Index space: cosine (HNSW)
   Converts distance → similarity:
     score = 1.0 - dist
+  add() is upsert-safe — existing IDs
+  are updated, not duplicated.
   Empty-collection guard in query()
-  Context manager for handle cleanup
+  and delete_by_source().
+  delete_by_source() uses ChromaDB
+  where-filter on metadata.source_file
+  — no chunk ID tracking required.
 end note
 
 @enduml

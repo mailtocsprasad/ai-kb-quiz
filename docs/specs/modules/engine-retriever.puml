@@ -5,7 +5,7 @@ class Retriever {
   - _store : VectorStore
   - _embed_fn : EmbedFn
   --
-  + __init__(index_dir: Path, embed_fn: EmbedFn,\n           collection_name: str = "kb")
+  + __init__(index_dir: Path, embed_fn: EmbedFn,\n           collection_name: str = "kb_chunks")
   + search(query: str, top_k: int = 5,\n          top_n: int | None = 20,\n          threshold: float = 0.0,\n          seed: int | None = None) : list[Chunk]
 }
 
@@ -29,13 +29,15 @@ Retriever ..> Chunk : returns list of
 Retriever ..> IndexNotFoundError : raises if index_dir missing
 
 note right of Retriever
+  collection_name must match the name
+  used at index time ("kb_chunks").
   top_n candidates fetched from ChromaDB;
   top_k randomly sampled from them.
   seed pins RNG for test determinism.
   top_n=None → deterministic top_k.
   Raises IndexNotFoundError if
   index_dir does not exist —
-  message includes rebuild instructions.
+  message includes rebuild command.
 end note
 
 @enduml

@@ -3,28 +3,34 @@ skinparam classAttributeIconSize 0
 
 class Manifest {
   - _path : Path
-  - _data : dict[str, dict]
+  - _data : dict[str, float]
   --
   + __init__(manifest_path: Path)
-  + diff(disk_files: list[Path]) : tuple[list, list, list]
-  + update(path: Path, chunk_ids: list[str]) : void
+  + diff(kb_dir: Path) : FileDiff
+  + update(path: Path) : void
   + remove(path: Path) : void
-  + get_chunk_ids(path: Path) : list[str]
   + save() : void
-  - {static} _key(path: Path) : str
-  - _is_changed(path: Path) : bool
 }
+
+class FileDiff <<NamedTuple>> {
+  + new : list[Path]
+  + changed : list[Path]
+  + deleted : list[Path]
+  --
+  + is_empty() : bool
+}
+
+Manifest ..> FileDiff : diff() returns
 
 note right of Manifest
   Persists as JSON at manifest_path
-  Keys normalised to forward slashes
-  _data schema:
-    { "kb/file.md": {
-        "mtime": 1713000000.0,
-        "chunk_ids": ["kb/file.md::0", ...]
-      } }
-  diff() returns (new, changed, deleted)
-  mtime tolerance: 0.01s
+  _data schema (mtime only):
+    { "/abs/path/kb/file.md": 1713000000.0 }
+  Stale chunk removal delegated to
+  VectorStore.delete_by_source() —
+  Manifest owns only file tracking,
+  not chunk ID tracking.
+  diff() returns FileDiff(new, changed, deleted)
 end note
 
 @enduml

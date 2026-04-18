@@ -73,6 +73,36 @@ ai-kb-quiz/
 
 ## Architecture
 
+```mermaid
+flowchart LR
+  USER(["User"])
+
+  subgraph INDEX["Index  (one-time)"]
+    direction LR
+    KB[KB\n.md files] --> CHK[Chunker] --> EMB[Embedder\nOllama / ST] --> VDB[(VectorDB\nChromaDB)]
+  end
+
+  subgraph QUIZ["Quiz  (per session)"]
+    direction LR
+    RET[Retriever] -->|3. compress| PTC[PTC\nCompress]
+    PTC -->|4. route| ROUTER[Router]
+    ROUTER -->|5a. fill-in| LOCAL[Local\nOllama]
+    ROUTER -->|5b. conceptual\n/ code| PREM[Premium\nClaude]
+    LOCAL -->|6. question| USER
+    PREM  -->|6. question| USER
+    LOCAL --> SCORER[Scorer]
+    PREM  --> SCORER
+  end
+
+  USER   -->|1. topic| RET
+  VDB    -->|2. search| RET
+  USER   -->|7. answer| SCORER
+  SCORER -->|8. score + feedback| USER
+
+  note1[/"Raw KB text never\nreaches any model"/]
+  PTC -.-> note1
+```
+
 See [`docs/specs/`](docs/specs/) for the full ADD + ATAM design and
 [`docs/specs/modules/`](docs/specs/modules/) for per-component PlantUML diagrams and E2E flow docs.
 
@@ -99,32 +129,34 @@ See [`docs/specs/`](docs/specs/) for the full ADD + ATAM design and
 
 ## Status
 
-**Current phase: Implementation** — Design complete. TDD implementation in progress (Tasks 1–19).
+**Current phase: Implementation** — Design complete. TDD implementation in progress. 96 tests passing, 3 skipped (live Ollama embedding models).
 
-| Milestone | Status |
-|-----------|--------|
-| User stories (Epics 1–10, Gherkin) | ✅ Done |
-| KB content (14 original-content files) | ✅ Done |
-| Design spec (ADD + ATAM, module specs, E2E flows) | ✅ Done |
-| Project scaffold (requirements, pyproject, conftest) | ✅ Done |
-| `engine/question.py` — core data types | ✅ Done (11 tests) |
-| `engine/router.py` — hybrid model routing | ✅ Done (11 tests) |
-| `engine/chunker.py` — markdown chunker | ⏳ Pending |
-| `engine/scorer.py` — answer scoring | ⏳ Pending |
-| `engine/session_log.py` — session logger | ⏳ Pending |
-| `engine/ptc.py` — PTC pipeline | ⏳ Pending |
-| `engine/sandbox.py` — RestrictedPython sandbox | ⏳ Pending |
-| `engine/models/` — model adapters | ⏳ Pending |
-| `engine/prog_tool_calling.py` — Programmable Tool Calling | ⏳ Pending |
-| `engine/retriever.py` — KB semantic search + deduplication | ⏳ Pending |
-| `engine/indexer.py` — KB vector indexer | ⏳ Pending |
-| `engine/quiz.py` — quiz orchestrator | ⏳ Pending |
-| `cli/main.py` — CLI (quiz, kb, stats) | ⏳ Pending |
-| Scorer calibration — golden eval test set [P0] | ⏳ Pending |
-| Cross-session deduplication — SeenChunks [P1] | ⏳ Pending |
-| Ollama fallback routing + auto-index [P1] | ⏳ Pending |
-| `quiz stats` command [P2] | ⏳ Pending |
-| `--no-ptc` flag, DirectRunner, Literal types [P3] | ⏳ Pending |
+- [x] User stories (Epics 1–10, Gherkin)
+- [x] KB content — 14 original-content markdown files
+- [x] Design spec (ADD + ATAM, module specs, E2E flow diagrams) — critical thinking review applied
+- [x] Project scaffold — `requirements.txt`, `pyproject.toml`, `conftest.py`
+- [x] `engine/question.py` — core data types (11 tests)
+- [x] `engine/router.py` — hybrid model routing, local/premium/hybrid modes (11 tests)
+- [x] `engine/chunker.py` — markdown → Chunk splitter at H2/H3 boundaries (13 tests)
+- [x] `engine/store.py` — ChromaDB VectorStore, cosine similarity, upsert-safe, delete_by_source (13 tests)
+- [x] `engine/embedder.py` — EmbedFn factory, Ollama + sentence-transformers backends (7 tests)
+- [x] `engine/manifest.py` — mtime-based file change tracking, FileDiff (8 tests)
+- [x] `engine/context_cache.py` — SHA-256 content-addressed context cache (7 tests)
+- [x] `engine/indexer.py` — full + incremental KB indexer, contextual embedding, context cache (9 tests)
+- [x] `engine/retriever.py` — semantic search, top-N sampling, IndexNotFoundError (9 tests)
+- [ ] `engine/scorer.py` — answer scoring (difflib fill-in, model eval conceptual)
+- [ ] `engine/session_log.py` — per-question JSON session logger
+- [ ] `engine/ptc.py` — PTC pipeline (developer-authored extraction scripts)
+- [ ] `engine/sandbox.py` — RestrictedPython AST + Job Object sandbox
+- [ ] `engine/models/` — ModelAdapter protocol, MockAdapter, Ollama, Anthropic SDK
+- [ ] `engine/prog_tool_calling.py` — Programmable Tool Calling: model-generated scripts + sandbox exec
+- [ ] `engine/quiz.py` — quiz session orchestrator
+- [ ] `cli/main.py` — CLI (`quiz`, `kb index`, `kb search`, `quiz stats` subcommands)
+- [ ] Scorer calibration — golden eval test set [P0]
+- [ ] SeenChunks cross-session deduplication [P1]
+- [ ] Ollama fallback routing + auto-index on first run [P1]
+- [ ] `quiz stats` cross-session score summary [P2]
+- [ ] `--no-ptc` flag, DirectRunner, Literal question types [P3]
 
 ## License
 

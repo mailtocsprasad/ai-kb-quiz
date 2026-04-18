@@ -1,0 +1,156 @@
+@startuml arch-responsibility-map
+skinparam backgroundColor white
+skinparam packageStyle rectangle
+skinparam defaultTextAlignment center
+skinparam componentStyle rectangle
+skinparam ArrowColor #555555
+skinparam PackageBorderColor #888888
+
+title ai-kb-quiz — Component Responsibility Map
+
+' ════════════════════════════════════════════════════════
+' LAYER 1: CLI
+' ════════════════════════════════════════════════════════
+package "CLI Layer" #E8F4FD {
+  component "cli/main.py\n─────────────────\nOwns: user I/O, config loading,\nengine wiring, subcommand dispatch\n(quiz, kb index, kb search, quiz stats)" as CLI #BDD7EE
+}
+
+' ════════════════════════════════════════════════════════
+' LAYER 2: Quiz Orchestration
+' ════════════════════════════════════════════════════════
+package "Quiz Pipeline" #EBF5EB {
+  component "quiz.py\n──────────────────\nOwns: session lifecycle,\nstep sequencing, error recovery" as QUIZ #C6E9C6
+
+  component "router.py\n──────────────────\nOwns: task → tier mapping\n(local | premium)\nPure stateless function" as ROUTER #C6E9C6
+
+  component "scorer.py\n──────────────────\nOwns: fill_in scoring (difflib),\nconceptual/code scoring\n(delegates to model eval)" as SCORER #C6E9C6
+
+  component "session_log.py\n──────────────────\nOwns: per-question JSON flush,\nretrieval_scores, token counts,\ncompression ratios, crash resilience" as LOG #C6E9C6
+}
+
+' ════════════════════════════════════════════════════════
+' LAYER 3: Compression Pipeline
+' ════════════════════════════════════════════════════════
+package "Compression Pipeline\n[Raw KB text never reaches any model]" #FEF9E7 {
+  component "ptc.py + ptc_scripts/\n──────────────────\nOwns: developer-authored extraction\n(summarize, concepts, code context)\nRuns in-process (trusted code)" as PTC #FAE5A0
+
+  component "prog_tool_calling.py\n──────────────────\nOwns: model-generated script pipeline\nPrompt → validate → sandbox exec\nFallback: PTCResult on any failure" as PTC2 #FAE5A0
+
+  component "sandbox.py\n──────────────────\nOwns: script isolation\nJobObjectRunner (Windows)\nDirectRunner (CI / Linux)\nRestrictedPython AST + OS limits" as SANDBOX #FAE5A0
+}
+
+' ════════════════════════════════════════════════════════
+' LAYER 4: Retrieval & Indexing
+' ════════════════════════════════════════════════════════
+package "Retrieval & Indexing" #F5EEF8 {
+  package "Read Path" #EDE0F5 {
+    component "retriever.py\n──────────────────\nOwns: query → top-K chunks\nRandom sampling for session diversity\nRaises IndexNotFoundError if missing" as RET #D9C3ED
+  }
+
+  package "Write Path" #EDE0F5 {
+    component "indexer.py\n──────────────────\nOwns: chunk → embed → store pipeline\nFull and incremental build\nOrchestrates all write-path components" as IDX #D9C3ED
+
+    component "chunker.py\n──────────────────\nOwns: markdown → Chunk list\nSplits at H2/H3 boundaries\nPure string function, no I/O" as CHUNKER #D9C3ED
+  }
+
+  package "Storage & State" #EDE0F5 {
+    component "embedder.py\n──────────────────\nOwns: EmbedFn factory\nOllama /api/embeddings\nor sentence-transformers" as EMBED #D9C3ED
+
+    component "store.py\n──────────────────\nOwns: ChromaDB CRUD\nCosine similarity, upsert-safe\ndelete_by_source (incremental)" as STORE #D9C3ED
+
+    component "manifest.py\n──────────────────\nOwns: mtime-based file tracking\ndiff() → new / changed / deleted\nDelegates chunk removal to VectorStore" as MAN #D9C3ED
+
+    component "context_cache.py\n──────────────────\nOwns: SHA-256 content-addressed\ncontext string cache\nPrevents repeat model calls on rebuild" as CC #D9C3ED
+  }
+}
+
+' ════════════════════════════════════════════════════════
+' LAYER 5: Model Adapters
+' ════════════════════════════════════════════════════════
+package "Model Adapter Layer" #FDF0EC {
+  component "local_adapter.py\n──────────────────\nOwns: Ollama HTTP API\nGraceful degradation if unreachable\nInjected httpx.Client (testable)" as LOCAL #F5C6B8
+
+  component "premium_adapter.py\n──────────────────\nOwns: Anthropic SDK\nAPI key from env var or file\nInjected anthropic.Anthropic (testable)" as PREM #F5C6B8
+
+  component "MockAdapter\n──────────────────\nOwns: deterministic test double\nRecords prompts in calls[]\nNo network, no SDK" as MOCK #F5C6B8
+}
+
+' ════════════════════════════════════════════════════════
+' EXTERNAL SERVICES
+' ════════════════════════════════════════════════════════
+package "External" #F2F3F4 {
+  component "Ollama :11434\n(local inference)" as OLLAMA #DCDCDC
+  component "Anthropic\nMessages API" as ANTHROPIC #DCDCDC
+  component "ChromaDB\nkb_index/" as CHROMA #DCDCDC
+  component "KB .md files\nkb/" as KB #DCDCDC
+  component "sentence-transformers\n(optional)" as ST #DCDCDC
+}
+
+' ════════════════════════════════════════════════════════
+' FLOW BOUNDARIES
+' ════════════════════════════════════════════════════════
+
+CLI -down-> QUIZ      : quiz session
+CLI -down-> IDX       : kb index
+CLI -down-> RET       : kb search
+
+QUIZ -down-> ROUTER   : route(task, type, mode)
+QUIZ -down-> SCORER   : score(answer)
+QUIZ -down-> LOG      : append(QuestionLog)
+QUIZ -down-> PTC      : compress(chunks)
+QUIZ -down-> PTC2     : extract(ptc_result)
+QUIZ -down-> RET      : search(query)
+
+ROUTER --> LOCAL      : local tier
+ROUTER --> PREM       : premium tier
+
+PTC2 -down-> PREM     : generate script
+PTC2 -down-> SANDBOX  : validate + exec
+
+RET -down-> EMBED     : encode(query)
+RET -down-> STORE     : query(vector)
+
+IDX -down-> CHUNKER   : chunk_markdown()
+IDX -down-> EMBED     : encode(chunk)
+IDX -down-> STORE     : add / delete_by_source
+IDX -down-> MAN       : diff / update
+IDX -down-> CC        : get / set context
+IDX -down-> PREM      : contextual embedding (optional)
+
+EMBED --> OLLAMA      : backend=ollama
+EMBED --> ST          : backend=sentence-transformers
+LOCAL --> OLLAMA
+PREM  --> ANTHROPIC
+STORE --> CHROMA
+IDX   --> KB
+
+' ════════════════════════════════════════════════════════
+' BOUNDARY ANNOTATIONS
+' ════════════════════════════════════════════════════════
+
+note as N1 #FFFACD
+  <b>Compression boundary</b>
+  Raw KB text never reaches any model.
+  PTC compresses chunks first.
+  Prog Tool Calling falls back to
+  PTCResult — never to raw chunks.
+end note
+
+note as N2 #FFFACD
+  <b>Testability boundary</b>
+  All external deps injected.
+  MockAdapter replaces both adapters.
+  fake_embed replaces EmbedFn.
+  tmp_path replaces ChromaDB.
+  Full pipeline runs in CI — zero live calls.
+end note
+
+note as N3 #FFFACD
+  <b>Index/query consistency</b>
+  Indexer and Retriever must use
+  the same embedding_model + backend.
+  Model change without rebuild =
+  dimension mismatch (R5).
+end note
+
+@enduml

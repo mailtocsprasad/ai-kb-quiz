@@ -5,31 +5,23 @@ class ContextCache {
   - _path : Path
   - _data : dict[str, str]
   --
-  + __init__(path: Path)
-  + get(key: str) : str | None
-  + set(key: str, value: str) : void
-  + prune(keep_hashes: set[str]) : void
+  + __init__(cache_path: Path)
+  + get(text: str) : str | None
+  + set(text: str, context: str) : void
   + save() : void
+  - {static} _key(text: str) : str
 }
-
-class "chunk_hash" <<function>> {
-  + chunk_hash(text: str) : str
-  ..
-  SHA-256[:16] of chunk text
-}
-
-ContextCache ..> "chunk_hash" : key produced by
 
 note right of ContextCache
   Content-addressed:
-    key = chunk_hash(chunk.text)
+    key = SHA-256(chunk.text)
     value = context string from model
   Same chunk text always maps
     to the same cache key —
-    renames don't miss cache
-  Persists as JSON at _path
-  prune() removes stale entries
-    (chunks no longer in KB)
+    file renames don't miss cache.
+  Persists as JSON at _path.
+  get()/set() take raw chunk text;
+  hashing is internal to _key().
 end note
 
 @enduml

@@ -21,6 +21,7 @@ component "store.py\nVectorStore" as STORE #LightYellow
 component "manifest.py" as MAN #LightYellow
 component "context_cache.py" as CC #LightYellow
 component "chunker.py" as CHUNKER #LightYellow
+component "embedder.py\nmake_embed_fn()" as EMBED #LightYellow
 
 ' ── Models ───────────────────────────────────
 component "ModelAdapter\nProtocol" as PROTO #LightCoral
@@ -32,7 +33,7 @@ component "Ollama\n:11434" as OLLAMA #WhiteSmoke
 component "Anthropic\nMessages API" as ANTHROPIC #WhiteSmoke
 component "KB files\n.md" as KB #WhiteSmoke
 component "ChromaDB\nkb_index/" as CHROMA #WhiteSmoke
-component "sentence-transformers\nEmbedFn" as EMBED #WhiteSmoke
+component "sentence-transformers\n(optional backend)" as ST #WhiteSmoke
 
 ' ── CLI → Engine ─────────────────────────────
 CLI --> QUIZ    : quiz --topic
@@ -62,7 +63,11 @@ IDX --> CC      : get/set context
 IDX --> MAN     : diff / update
 IDX --> PREM    : contextual embedding
 IDX --> EMBED   : encode(chunk)
-IDX --> STORE   : add / delete
+IDX --> STORE   : add / delete_by_source
+
+' ── Embedding backends ───────────────────────
+EMBED --> OLLAMA : backend=ollama\n/api/embeddings
+EMBED --> ST    : backend=sentence-transformers
 
 ' ── External ─────────────────────────────────
 LOCAL --> OLLAMA

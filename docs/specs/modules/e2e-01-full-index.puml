@@ -8,7 +8,7 @@ participant "Indexer" as IDX
 participant "chunker_fn" as CHK
 participant "ContextCache" as CC
 participant "PremiumAdapter\n(context_adapter)" as PREM
-participant "EmbedFn\n(sentence-transformers)" as EMB
+participant "EmbedFn\n(embedder.py)" as EMB
 participant "VectorStore\n(ChromaDB)" as VS
 participant "Manifest" as MAN
 
@@ -36,15 +36,15 @@ loop for each .md file
 
     IDX -> IDX : prepared = "{context}\n\n{chunk.text}"
     IDX -> EMB : encode(prepared)
-    EMB --> IDX : vector[384]
-    IDX -> VS : add(chunk_id, vector,\n        prepared, {file, heading, ...})
+    EMB --> IDX : vector[N]
+    note right : N = embedding model dimension\n(e.g. 768 for nomic-embed-text,\n 384 for all-MiniLM-L6-v2)
+    IDX -> VS : add([chunk_id], [vector],\n        [prepared], [{source_file, heading}])
   end
 
-  IDX -> MAN : update(file, chunk_ids)
+  IDX -> MAN : update(file)
 end
 
 IDX -> CC : save()
-IDX -> MAN : save()
 
 CLI --> User : "[kb-index] Done. N chunks indexed."
 

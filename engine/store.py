@@ -68,3 +68,11 @@ class VectorStore:
         if self.count() == 0:
             return []
         return self._col.get()["ids"]
+
+    def delete_by_source(self, source_file: str) -> None:
+        """Delete all chunks whose metadata source_file matches the given path."""
+        if self.count() == 0:
+            return
+        result = self._col.get(where={"source_file": {"$eq": source_file}})
+        if result["ids"]:
+            self._col.delete(ids=result["ids"])

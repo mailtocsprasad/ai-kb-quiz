@@ -1,0 +1,62 @@
+@startuml readme-overview
+skinparam backgroundColor white
+skinparam defaultTextAlignment center
+skinparam ArrowColor #444444
+skinparam ArrowThickness 1.5
+left to right direction
+
+skinparam rectangle {
+  BackgroundColor #F8F9FA
+  BorderColor #888888
+  FontSize 12
+}
+
+skinparam package {
+  BackgroundColor #FFFFFF
+  BorderColor #AAAAAA
+  FontSize 11
+}
+
+' ── Shared ───────────────────────────────────────────
+rectangle "VectorDB\n(ChromaDB)" as VDB #E8E8E8
+
+' ── Index path ───────────────────────────────────────
+package "Index  (one-time)" #EDF7ED {
+  rectangle "KB\n.md files" as KB   #D5E8D4
+  rectangle "Chunker"       as CHK  #D5E8D4
+  rectangle "Embedder\n(Ollama / ST)" as EMBI #D5E8D4
+}
+
+KB  -right-> CHK  : split H2/H3
+CHK -right-> EMBI : Chunk[ ]
+EMBI -right-> VDB : store\nvectors
+
+' ── Quiz path ────────────────────────────────────────
+package "Quiz  (per session)" #EBF3FB {
+  rectangle "Topic\nQuery"  as Q      #DAE8FC
+  rectangle "Retriever"     as RET    #DAE8FC
+  rectangle "PTC\nCompress" as PTC    #DAE8FC
+  rectangle "Router"        as ROUTER #DAE8FC
+  rectangle "Local\n(Ollama)"   as LOCAL #DAE8FC
+  rectangle "Premium\n(Claude)" as PREM  #DAE8FC
+  rectangle "Scorer"        as SCORER #DAE8FC
+  rectangle "Score\n0/0.5/1.0"  as SCORE #DAE8FC
+}
+
+Q      -right-> RET    : encode +\nsearch
+RET    -right-> PTC    : top-K chunks
+PTC    -right-> ROUTER : compressed\ncontext
+ROUTER -down->  LOCAL  : fill-in
+ROUTER -right-> PREM   : conceptual\n/ code
+LOCAL  -right-> SCORER
+PREM   -down->  SCORER
+SCORER -right-> SCORE
+
+VDB -down-> RET : cosine\nsimilarity
+
+note bottom of PTC
+  Raw KB text never
+  reaches any model
+end note
+
+@enduml

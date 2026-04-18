@@ -5,7 +5,7 @@ title E2E-06: CLI KB Search
 actor User
 participant "CLI\nmain.py" as CLI
 participant "Retriever" as RET
-participant "EmbedFn\n(sentence-transformers)" as EMB
+participant "EmbedFn\n(embedder.py)" as EMB
 participant "VectorStore\n(ChromaDB)" as VS
 
 User -> CLI : python cli/main.py kb search "kernel callbacks" --top 5
@@ -18,12 +18,13 @@ alt index_dir does not exist
 end
 
 RET -> EMB : encode("kernel callbacks")
-EMB --> RET : query_vector[384]
+EMB --> RET : query_vector[N]
+note right : N = embedding model dimension\n(configured via embedding_model)
 
 RET -> VS : query(query_vector, top_k=5, threshold=0.0)
 VS --> RET : [\n  {chunk, score=0.91, heading="Kernel Callbacks", file="windows-internals.md"},\n  {chunk, score=0.84, heading="PsSetCreateProcessNotifyRoutine", file="edr-sensors.md"},\n  ...\n]
 
-RET -> RET : map to List[Chunk]\nsort by score desc
+RET -> RET : filter by threshold\nmap to List[Chunk]\nsample top_k from top_n candidates
 
 RET --> CLI : [Chunk(...), Chunk(...), ...]
 

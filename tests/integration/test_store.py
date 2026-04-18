@@ -70,3 +70,30 @@ def test_query_on_empty_store_returns_empty(store):
 
 def test_get_ids_on_empty_store_returns_empty(store):
     assert store.get_ids() == []
+
+
+def test_delete_by_source_removes_matching_chunks(store):
+    store.add(
+        ids=["a1", "a2", "b1"],
+        embeddings=[[1.0, 0.0], [0.9, 0.1], [0.0, 1.0]],
+        documents=["doc a1", "doc a2", "doc b1"],
+        metadatas=[
+            {"source_file": "a.md"},
+            {"source_file": "a.md"},
+            {"source_file": "b.md"},
+        ],
+    )
+    store.delete_by_source("a.md")
+    assert store.count() == 1
+    assert store.get_ids() == ["b1"]
+
+
+def test_delete_by_source_unknown_file_is_noop(store):
+    store.add(ids=["a"], embeddings=[[1.0, 0.0]], documents=["doc"], metadatas=[{"source_file": "a.md"}])
+    store.delete_by_source("nonexistent.md")
+    assert store.count() == 1
+
+
+def test_delete_by_source_on_empty_store_is_noop(store):
+    store.delete_by_source("any.md")
+    assert store.count() == 0

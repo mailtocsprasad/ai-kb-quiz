@@ -8,10 +8,11 @@ participant "ContextCache" as CC
 participant "ModelAdapter" as MA
 participant "EmbedFn" as EMB
 
-IDX -> MAN : diff(disk_files)
+IDX -> MAN : diff(kb_dir)
 MAN --> IDX : new=[f1], changed=[], deleted=[]
 
 loop for each .md file (new or changed)
+  IDX -> VS : delete_by_source(str(file))
   IDX -> IDX : chunk_markdown(file_text)
 
   loop for each Chunk
@@ -22,16 +23,16 @@ loop for each .md file (new or changed)
       IDX -> CC : set(hash, context_string)
     end
 
-    IDX -> IDX : _prepare_text(chunk, context)\n→ "{context}\n\n{chunk.text}"
+    IDX -> IDX : _prepare(chunk)\n→ "{context}\n\n{chunk.text}"
     IDX -> EMB : encode(prepared_text)
-    EMB --> IDX : vector[384]
-    IDX -> VS : add(chunk_id, vector, prepared_text,\n        {file, heading, chunk_index})
+    EMB --> IDX : vector[N]
+    note right : N varies by embedding model\n(768 Ollama / 384 sentence-transformers)
+    IDX -> VS : add([chunk_id], [vector], [prepared_text],\n        [{source_file, heading}])
   end
 
-  IDX -> MAN : update(f1, chunk_ids)
+  IDX -> MAN : update(file)
 end
 
 IDX -> CC : save()
-IDX -> MAN : save()
 
 @enduml

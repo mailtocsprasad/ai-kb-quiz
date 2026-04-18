@@ -6,9 +6,19 @@ Visual models for all key scenarios. Each scenario is described from two angles:
 
 ---
 
-## System Component Overview
+## Component Responsibility Map
 
-All modules and their wiring — colour-coded by layer.
+High-level block diagram showing each component's ownership, the logical layers
+they belong to, and the key architectural boundaries (compression, testability,
+index/query consistency).
+
+![Component responsibility map](arch-responsibility-map.png)
+
+---
+
+## System Component Overview (Wiring)
+
+All modules and their dependency wiring — colour-coded by layer.
 
 | Colour | Layer |
 |---|---|
@@ -63,7 +73,7 @@ If they accidentally run it with no changes, nothing happens — the manifest di
 
 ### System perspective
 
-CLI → Indexer → Manifest.diff() → VectorStore.delete(stale IDs) → re-index changed + new → Manifest.save()
+CLI → Indexer → Manifest.diff() → VectorStore.delete_by_source(changed/deleted files) → re-index new + changed → Manifest.update() → ContextCache.save()
 
 ![Incremental KB index flow](e2e-02-incremental-index.png)
 
