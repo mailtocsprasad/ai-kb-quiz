@@ -33,6 +33,7 @@ When implementing a module, add a one-line docstring referencing the story ID (e
 | 10 | ⬜ Pending | `engine/scorer.py` | Story 6.1 — Score fill-in (difflib) and conceptual/code (model eval) |
 | 11 | ⬜ Pending | `engine/session_log.py` | Story 9.1 — Per-question JSON session log |
 | 12 | ⬜ Pending | `engine/ptc.py` + scripts | Story 3.1 — PTC compression pipeline |
+| 12.5 | ⬜ Pending | `engine/learn.py` | Story 7.4 — LearnSession REPL (explain / follow_up / suggest) |
 | 13 | ⬜ Pending | `engine/sandbox.py` | Story 4.1 — Sandbox model-generated scripts |
 | 14 | ⬜ Pending | `engine/models/` | Story 1.1–1.2 — ModelAdapter, LocalAdapter, PremiumAdapter |
 | 15 | ⬜ Pending | `engine/prog_tool_calling.py` | Story 4.1 — Programmable Tool Calling with fallback |
@@ -1595,6 +1596,267 @@ git commit -m "feat: PTC pipeline — developer-authored extraction scripts"
 
 ---
 
+## Task 12.5: LearnSession (`engine/learn.py`)
+
+**User Story:** 7.4 — Interactive `kb learn` REPL: structured explanation of a KB topic, followed by a suggest → follow_up loop. Supports numbered suggestion selection, free-form questions, `quiz` handoff, and graceful failure.
+
+**Dependencies:** Task 12 (PTC — `compress()`), Task 14 (model adapters — `ModelAdapter`, `LocalAdapter`, `PremiumAdapter`). Can be unit-tested with `MockAdapter` before Task 14 is complete.
+
+**Files:**
+- Create: `engine/learn.py`
+- Create: `tests/unit/test_learn.py`
+
+- [ ] **Step 1: Write failing tests**
+
+```python
+# tests/unit/test_learn.py
+import pytest
+from engine.learn import LearnSession
+from engine.question import Chunk, PTCResult
+from tests.conftest import MockAdapter
+
+
+def _make_chunks(n=2):
+    return [
+        Chunk(text=f"Content {i}", source_file="wi.md", heading=f"Section {i}")
+        for i in range(n)
+    ]
+
+
+def _fake_ptc(chunks, task_type):
+    text = " ".join(c.text for c in chunks)
+    return PTCResult(compressed_text=f"[compressed] {text}", raw_tokens=100, compressed_tokens=30)
+
+
+@pytest.fixture
+def session():
+    local = MockAdapter(response="Here is the explanation.")
+    premium = MockAdapter(response="Deep explanation.")
+    return LearnSession(
+        retriever=None,  # injected per test
+        ptc_fn=_fake_ptc,
+        local=local,
+        premium=premium,
+        depth="shallow",
+    )
+
+
+def test_explain_returns_text_and_chunks(session):
+    chunks = _make_chunks()
+    text, returned_chunks = session._explain_from_chunks("SSDT", chunks)
+    assert text == "Here is the explanation."
+    assert returned_chunks == chunks
+
+
+def test_explain_uses_local_for_shallow(session):
+    chunks = _make_chunks()
+    session._explain_from_chunks("SSDT", chunks)
+    assert len(session._local.calls) == 1
+    assert len(session._premium.calls) == 0
+
+
+def test_explain_uses_premium_for_deep():
+    local = MockAdapter(response="local")
+    premium = MockAdapter(response="premium")
+    s = LearnSession(retriever=None, ptc_fn=_fake_ptc,
+                     local=local, premium=premium, depth="deep")
+    s._explain_from_chunks("SSDT", _make_chunks())
+    assert len(premium.calls) == 1
+    assert len(local.calls) == 0
+
+
+def test_explain_prompt_contains_topic(session):
+    chunks = _make_chunks()
+    session._explain_from_chunks("SSDT", chunks)
+    assert "SSDT" in session._local.calls[0]
+
+
+def test_follow_up_returns_text_and_chunks(session):
+    chunks = _make_chunks()
+    text, returned_chunks = session._answer_from_chunks("What is SSDT?", chunks)
+    assert text
+    assert returned_chunks == chunks
+
+
+def test_follow_up_prompt_contains_question(session):
+    chunks = _make_chunks()
+    session._answer_from_chunks("How does PatchGuard work?", chunks)
+    assert "PatchGuard" in session._local.calls[0]
+
+
+def test_suggest_returns_list(session):
+    local = MockAdapter(response='["Q1?", "Q2?", "Q3?"]')
+    s = LearnSession(retriever=None, ptc_fn=_fake_ptc,
+                     local=local, premium=MockAdapter(), depth="shallow")
+    suggestions = s.suggest(_make_chunks(), last_query="SSDT")
+    assert suggestions == ["Q1?", "Q2?", "Q3?"]
+
+
+def test_suggest_always_uses_local():
+    local = MockAdapter(response='["Q1?"]')
+    premium = MockAdapter(response="should not be called")
+    s = LearnSession(retriever=None, ptc_fn=_fake_ptc,
+                     local=local, premium=premium, depth="deep")
+    s.suggest(_make_chunks(), last_query="SSDT")
+    assert len(local.calls) == 1
+    assert len(premium.calls) == 0
+
+
+def test_suggest_returns_empty_on_malformed_json(session):
+    session._local = MockAdapter(response="not valid json")
+    result = session.suggest(_make_chunks(), last_query="SSDT")
+    assert result == []
+
+
+def test_suggest_returns_empty_on_non_list_json(session):
+    session._local = MockAdapter(response='{"key": "value"}')
+    result = session.suggest(_make_chunks(), last_query="SSDT")
+    assert result == []
+
+
+def test_suggest_prompt_contains_headings(session):
+    session._local = MockAdapter(response='[]')
+    chunks = _make_chunks(2)
+    session.suggest(chunks, last_query="SSDT")
+    prompt = session._local.calls[0]
+    assert "Section 0" in prompt
+    assert "Section 1" in prompt
+
+
+def test_suggest_prompt_contains_last_query(session):
+    session._local = MockAdapter(response='[]')
+    session.suggest(_make_chunks(), last_query="PatchGuard detection")
+    assert "PatchGuard detection" in session._local.calls[0]
+```
+
+- [ ] **Step 2: Run tests — verify they fail**
+
+```bash
+pytest tests/unit/test_learn.py -v
+```
+
+Expected: `ImportError: No module named 'engine.learn'`
+
+- [ ] **Step 3: Implement `engine/learn.py`**
+
+```python
+"""Interactive KB learning session with REPL, follow-up answers, and suggestions.
+
+User story: 7.4 — Learn about a KB topic via structured explanation and interactive follow-up.
+"""
+import json
+from typing import Callable
+
+from engine.question import Chunk, PTCResult
+from engine.models.adapter import ModelAdapter
+
+
+class LearnSession:
+    """Stateful REPL controller for kb learn.
+
+    explain() and follow_up() use PTC + local or premium adapter based on depth.
+    suggest() always uses local adapter and never raises — returns [] on failure.
+    """
+
+    def __init__(
+        self,
+        retriever,
+        ptc_fn: Callable,
+        local: ModelAdapter,
+        premium: ModelAdapter,
+        depth: str = "shallow",
+    ):
+        self._retriever = retriever
+        self._ptc_fn = ptc_fn
+        self._local = local
+        self._premium = premium
+        self._depth = depth
+        self._topic = ""
+
+    @property
+    def _adapter(self) -> ModelAdapter:
+        return self._premium if self._depth == "deep" else self._local
+
+    def explain(self, topic: str) -> tuple[str, list[Chunk]]:
+        """Retrieve chunks for topic and generate structured explanation."""
+        self._topic = topic
+        chunks = self._retriever.search(topic, top_k=5)
+        if not chunks:
+            return "", []
+        return self._explain_from_chunks(topic, chunks)
+
+    def follow_up(self, question: str) -> tuple[str, list[Chunk]]:
+        """Retrieve chunks for follow-up question anchored to original topic and answer it."""
+        anchored = f"{self._topic}: {question}" if self._topic else question
+        chunks = self._retriever.search(anchored, top_k=5)
+        if not chunks:
+            return "", []
+        return self._answer_from_chunks(question, chunks)
+
+    def suggest(self, chunks: list[Chunk], last_query: str) -> list[str]:
+        """Generate up to 3 follow-up question suggestions grounded in chunk headings.
+
+        Always uses local adapter. Never raises — returns [] on any failure.
+        Suggestions are grounded on headings only to prevent hallucination (R6).
+        """
+        headings = "\n".join(
+            f"  • {c.source_file} › {c.heading}" for c in chunks
+        )
+        prompt = (
+            f"The user just asked about: \"{last_query}\"\n\n"
+            f"Based ONLY on these KB sections (do not suggest topics not listed here):\n"
+            f"{headings}\n\n"
+            f"Suggest exactly 3 short follow-up questions a learner might ask next.\n"
+            f"Respond with a JSON array only: [\"question 1\", \"question 2\", \"question 3\"]"
+        )
+        try:
+            raw = self._local.generate(prompt)
+            result = json.loads(raw)
+            if not isinstance(result, list):
+                return []
+            return [str(q) for q in result[:3]]
+        except Exception:
+            return []
+
+    def _explain_from_chunks(self, topic: str, chunks: list[Chunk]) -> tuple[str, list[Chunk]]:
+        ptc = self._ptc_fn(chunks, "extract_concepts")
+        prompt = (
+            f"You are a technical teacher. Explain the topic: '{topic}'\n\n"
+            f"Use only the KB content below. Structure your response as:\n"
+            f"Overview: (2-3 sentences)\n"
+            f"Key Concepts: (bullet list: term — one-line definition)\n"
+            f"How They Connect: (2-3 sentences)\n\n"
+            f"KB content:\n{ptc.compressed_text}"
+        )
+        return self._adapter.generate(prompt), chunks
+
+    def _answer_from_chunks(self, question: str, chunks: list[Chunk]) -> tuple[str, list[Chunk]]:
+        ptc = self._ptc_fn(chunks, "summarize_chunk")
+        prompt = (
+            f"Answer this question concisely using only the KB content below.\n\n"
+            f"Question: {question}\n\n"
+            f"KB content:\n{ptc.compressed_text}"
+        )
+        return self._adapter.generate(prompt), chunks
+```
+
+- [ ] **Step 4: Run tests — verify they pass**
+
+```bash
+pytest tests/unit/test_learn.py -v
+```
+
+Expected: All 12 tests PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add engine/learn.py tests/unit/test_learn.py
+git commit -m "feat: LearnSession — interactive kb learn REPL with explain, follow_up, suggest"
+```
+
+---
+
 ## Task 13: Sandbox (`engine/sandbox.py`)
 
 **User Story:** 4.1 — Sandbox validates and executes model-generated scripts via RestrictedPython AST. Blocks dangerous imports (`os`, `subprocess`, `open`, etc.). Script receives `data` string, must set `output` variable.
@@ -2876,17 +3138,21 @@ def _load_config(config_path: Path = Path("config/config.yaml")) -> dict:
 @kb_app.command("index")
 def kb_index(rebuild: bool = typer.Option(False, "--rebuild", help="Force full rebuild")):
     """Build or update the KB vector index."""
+    from engine.embedder import make_embed_fn
     from engine.indexer import Indexer
-    from sentence_transformers import SentenceTransformer
     cfg = _load_config()
-    model = SentenceTransformer(cfg.get("embedding_model", "all-MiniLM-L6-v2"))
-    embed_fn = lambda text: model.encode(text).tolist()
+    embed_fn = make_embed_fn(
+        model=cfg.get("embedding_model", "all-MiniLM-L6-v2"),
+        backend=cfg.get("embedding_backend", "sentence-transformers"),
+    )
     indexer = Indexer(kb_dir=Path("kb"), index_dir=Path("kb_index"), embed_fn=embed_fn)
     typer.echo("Building KB index...")
-    stats = indexer.build(rebuild=rebuild)
-    typer.echo(f"Done. Files indexed: {stats['files_indexed']}, "
-               f"chunks: {stats['total_chunks']}, "
-               f"unchanged: {stats['files_unchanged']}")
+    if rebuild:
+        indexer.build_full()
+        typer.echo("Full rebuild complete.")
+    else:
+        indexer.build_incremental()
+        typer.echo("Incremental index update complete.")
 
 
 @kb_app.command("list")
@@ -2957,24 +3223,25 @@ def kb_search(query: str = typer.Argument(...),
 
     User story: 2.1 — Retrieve relevant KB chunks by semantic similarity.
     """
-    import numpy as np
+    from engine.embedder import make_embed_fn
     from engine.retriever import Retriever, IndexNotFoundError
-    from sentence_transformers import SentenceTransformer
     cfg = _load_config()
     try:
-        retriever = Retriever(index_dir=Path("kb_index"))
+        embed_fn = make_embed_fn(
+            model=cfg.get("embedding_model", "all-MiniLM-L6-v2"),
+            backend=cfg.get("embedding_backend", "sentence-transformers"),
+        )
+        retriever = Retriever(index_dir=Path("kb_index"), embed_fn=embed_fn)
     except IndexNotFoundError:
         typer.echo("Index is empty. Run: python cli/main.py kb index")
         raise typer.Exit(code=1)
-    model = SentenceTransformer(cfg.get("embedding_model", "all-MiniLM-L6-v2"))
-    query_vec = np.array(model.encode(query), dtype=np.float32)
-    results = retriever.search_by_vector(query_vec, top_k=top, min_score=0.0)
+    results = retriever.search(query, top_k=top)
     if not results:
         typer.echo("No results found.")
         return
-    for i, r in enumerate(results, 1):
-        typer.echo(f"\n[{i}] score={r.score:.3f} | {r.chunk.source_file} — {r.chunk.heading}")
-        typer.echo(f"    {r.chunk.text[:200]}...")
+    for i, chunk in enumerate(results, 1):
+        typer.echo(f"\n[{i}] {chunk.source_file} — {chunk.heading}")
+        typer.echo(f"    {chunk.text[:200]}...")
 
 
 @kb_app.command("learn")
@@ -2983,77 +3250,135 @@ def kb_learn(
     depth: str = typer.Option("shallow", "--depth", help="shallow (local) or deep (premium)"),
     top: int = typer.Option(5, "--top", help="Number of KB chunks to retrieve"),
 ):
-    """Get a structured explanation of a KB topic.
+    """Interactive study session: explanation + follow-up REPL with suggestions.
 
     User story: 7.4 — Learn about a KB topic before or after a quiz session.
-    Retrieves relevant chunks, compresses via PTC, and asks the model to generate
-    a structured breakdown: Overview, Key Concepts, Relationships, Sources.
+    Shows a structured explanation then enters a REPL loop where you can ask
+    follow-up questions, pick numbered suggestions, type 'quiz', or 'quit'.
     """
-    import numpy as np
+    from engine.embedder import make_embed_fn
     from engine.retriever import Retriever, IndexNotFoundError
     from engine.ptc import compress
-    from engine.router import route
+    from engine.learn import LearnSession
     from engine.models.local_adapter import LocalAdapter
     from engine.models.premium_adapter import PremiumAdapter
-    from sentence_transformers import SentenceTransformer
 
     cfg = _load_config()
     try:
-        retriever = Retriever(index_dir=Path("kb_index"))
+        embed_fn = make_embed_fn(
+            model=cfg.get("embedding_model", "all-MiniLM-L6-v2"),
+            backend=cfg.get("embedding_backend", "sentence-transformers"),
+        )
+        retriever = Retriever(index_dir=Path("kb_index"), embed_fn=embed_fn)
     except IndexNotFoundError:
         typer.echo("Index is empty. Run: python cli/main.py kb index")
         raise typer.Exit(code=1)
 
-    st_model = SentenceTransformer(cfg.get("embedding_model", "all-MiniLM-L6-v2"))
-    query_vec = np.array(st_model.encode(topic), dtype=np.float32)
-    results = retriever.search_by_vector(query_vec, top_k=top, min_score=0.1)
-    if not results:
-        typer.echo(f"No KB content found for '{topic}'.")
-        raise typer.Exit(code=0)
-
-    chunks = [r.chunk for r in results]
-    ptc_result = compress(chunks, task_type="extract_concepts")
-
-    mode = cfg.get("mode", "hybrid")
-    effective_mode = "premium" if depth == "deep" else "local"
-    destination = route("generate_question", "conceptual", effective_mode)
-
     local = LocalAdapter(model=cfg.get("local_model", "phi4-mini"))
-    if destination == "premium":
+    if depth == "deep":
         try:
-            adapter = PremiumAdapter.from_config(
+            premium = PremiumAdapter.from_config(
                 model=cfg.get("premium_model", "claude-sonnet-4-6"),
                 api_key_file=Path(cfg.get("api_key_file", "Claude-Key.txt")),
             )
         except EnvironmentError:
-            typer.echo("Premium model unavailable — falling back to local.")
-            adapter = local
+            typer.echo("Premium model unavailable — falling back to local for deep mode.")
+            premium = local
     else:
-        adapter = local
+        premium = local
 
-    sources = sorted({c.source_file for c in chunks})
-    headings = [f"  • {c.source_file} › {c.heading}" for c in chunks]
-
-    prompt = (
-        f"You are a technical teacher. A user wants to learn about: '{topic}'\n\n"
-        f"Based on the following KB content, produce a structured explanation with these sections:\n"
-        f"1. Overview (2-3 sentences)\n"
-        f"2. Key Concepts (bullet list: term — one-line definition)\n"
-        f"3. How They Connect (2-3 sentences on relationships)\n\n"
-        f"Be concise and precise. Use only what is in the KB content below.\n\n"
-        f"KB content:\n{ptc_result.compressed_text}"
+    session = LearnSession(
+        retriever=retriever,
+        ptc_fn=compress,
+        local=local,
+        premium=premium,
+        depth=depth,
     )
-    explanation = adapter.generate(prompt)
 
+    # --- Initial explanation ---
     typer.echo(f"\n{'='*60}")
-    typer.echo(f"  Topic: {topic}")
+    typer.echo(f"  Topic: {topic}  [{depth}]")
     typer.echo(f"{'='*60}\n")
-    typer.echo(explanation)
+
+    explanation, chunks = session.explain(topic)
+    if not explanation:
+        typer.echo(f"No KB content found for '{topic}'.")
+        raise typer.Exit(code=0)
+
+    model_tag = "(premium)" if depth == "deep" else "(local)"
+    typer.echo(f"{explanation}\n{model_tag}")
+
+    _print_sources(chunks)
+
+    # --- REPL loop ---
+    last_chunks = chunks
+    last_query = topic
+    tokens_used = len(explanation) // 4
+
+    try:
+        while True:
+            suggestions = session.suggest(last_chunks, last_query)
+            _print_suggestions(suggestions)
+
+            raw = typer.prompt("\nAsk a follow-up (1-3, your own question, 'quiz', or 'quit')")
+            user_input = raw.strip()
+
+            if user_input.lower() in ("quit", "exit", "q"):
+                typer.echo(f"\nSession ended. Tokens used (approx): {tokens_used}")
+                break
+
+            if user_input.lower() == "quiz":
+                typer.echo(f"\nQuiz yourself: python cli/main.py quiz --topic '{topic}'")
+                break
+
+            # Resolve numbered suggestion to text
+            if user_input.isdigit():
+                idx = int(user_input) - 1
+                if suggestions and 0 <= idx < len(suggestions):
+                    user_input = suggestions[idx]
+                    typer.echo(f"  → {user_input}")
+                else:
+                    typer.echo(f"  Please enter a number between 1 and {len(suggestions) or 1}.")
+                    continue
+
+            # Follow-up answer
+            typer.echo("")
+            answer, new_chunks = session.follow_up(user_input)
+            if not answer:
+                typer.echo(f"No KB content found for that question. Try a different phrasing.")
+                _print_suggestions(suggestions)
+                continue
+
+            typer.echo(f"{answer}\n{model_tag}")
+            _print_sources(new_chunks)
+            tokens_used += len(answer) // 4
+            last_chunks = new_chunks
+            last_query = user_input
+
+    except KeyboardInterrupt:
+        typer.echo(f"\n\nSession ended. Tokens used (approx): {tokens_used}")
+
+
+def _print_sources(chunks) -> None:
+    if not chunks:
+        return
     typer.echo(f"\n{'─'*60}")
     typer.echo("Sources:")
-    for h in headings:
-        typer.echo(h)
-    typer.echo(f"\nQuiz yourself: python cli/main.py quiz --topic '{topic}'")
+    seen = set()
+    for c in chunks:
+        key = f"{c.source_file} › {c.heading}"
+        if key not in seen:
+            typer.echo(f"  • {key}")
+            seen.add(key)
+
+
+def _print_suggestions(suggestions: list[str]) -> None:
+    if not suggestions:
+        return
+    typer.echo(f"\n{'─'*60}")
+    typer.echo("Suggested follow-ups:")
+    for i, s in enumerate(suggestions, 1):
+        typer.echo(f"  [{i}] {s}")
 
 
 @app.command("quiz")
@@ -3508,6 +3833,80 @@ percentage output.
 ```bash
 git add cli/main.py tests/unit/test_stats.py
 git commit -m "feat: quiz stats command — cross-session score aggregation by topic"
+```
+
+---
+
+### Task 20 [P2] — Fine-Grained Chunker: One Concept Per Chunk
+
+**Problem:** The current chunker splits on `##` headings, producing large mixed-topic chunks
+(e.g. `windows-internals.md` "Key Concepts" is 9211 chars covering 20+ concepts). Two
+consequences:
+1. Semantic search retrieves the wrong chunks — "SSDT hooking" returns eBPF results because
+   eBPF chunks saturate the vector space with "hook" terminology.
+2. The Ollama embedder truncates chunks to 2000 chars, so content beyond that limit is
+   never embedded — SSDT mentions at char 2000+ are invisible to retrieval.
+
+**Root cause:** Heading-level chunking is too coarse for dense reference documents.
+
+**Goal:** Sub-heading chunker that splits on bold list items, definition blocks, or
+paragraph boundaries within a heading section, targeting ~300–600 chars per chunk.
+
+- Files to change: `engine/chunker.py`
+- Create: `tests/unit/test_chunker_fine.py`
+
+**Acceptance criteria:**
+- `windows-internals.md` "Key Concepts" section produces ≥ 5 chunks (not 1)
+- Each chunk ≤ 800 chars
+- `ai-kb-quiz kb search "SSDT hooking"` returns a chunk containing "SSDT" in top-3
+
+**Step 1: Write failing tests**
+
+```python
+# tests/unit/test_chunker_fine.py
+from engine.chunker import chunk_markdown
+from pathlib import Path
+
+def test_key_concepts_section_splits_into_multiple_chunks(tmp_path):
+    md = (
+        "## Key Concepts\n\n"
+        "**SSDT Hooking**: The SSDT maps syscall numbers to kernel function addresses.\n\n"
+        "**Kernel Callbacks**: PsSetCreateProcessNotifyRoutine registers a callback.\n\n"
+        "**VAD Tree**: Virtual Address Descriptor tracks memory regions per process.\n\n"
+        "**EPROCESS**: Core kernel structure representing a process.\n\n"
+    )
+    f = tmp_path / "test.md"
+    f.write_text(md)
+    chunks = chunk_markdown(md, str(f))
+    assert len(chunks) >= 4
+
+def test_chunks_respect_max_size(tmp_path):
+    long_para = "Word " * 300  # ~1500 chars
+    md = f"## Big Section\n\n**Term A**: {long_para}\n\n**Term B**: short.\n\n"
+    f = tmp_path / "test.md"
+    f.write_text(md)
+    chunks = chunk_markdown(md, str(f))
+    assert all(len(c.text) <= 800 for c in chunks)
+
+def test_heading_preserved_in_chunk_metadata():
+    md = "## SSDT\n\n**Hooking**: Overwrites entries.\n\n"
+    chunks = chunk_markdown(md, "test.md")
+    assert all("SSDT" in c.heading for c in chunks)
+```
+
+**Step 2: Implement sub-heading splitter in `engine/chunker.py`**
+
+Strategy: after splitting on `##` headings, further split each section on:
+1. `**Bold term**:` patterns (definition-list style)
+2. Blank-line paragraph boundaries
+3. Hard limit: split at 800 chars on sentence boundary if still too large
+
+**Step 3: Rebuild index and verify search**
+
+```bash
+ai-kb-quiz kb index --rebuild
+ai-kb-quiz kb search "SSDT hooking"
+# Expect: top results contain "SSDT" not "eBPF hook"
 ```
 
 ---

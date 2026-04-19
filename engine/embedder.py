@@ -34,12 +34,19 @@ def _make_st_fn(model: str) -> EmbedFn:
     return embed
 
 
+_OLLAMA_MAX_CHARS = 2000  # nomic-embed-text context window (~512 tokens)
+
+
 def _make_ollama_fn(model: str, base_url: str) -> EmbedFn:
-    url = f"{base_url.rstrip('/')}/api/embeddings"
+    url = f"{base_url.rstrip('/')}/api/embed"
 
     def embed(text: str) -> list[float]:
-        resp = httpx.post(url, json={"model": model, "prompt": text}, timeout=30.0)
+        resp = httpx.post(
+            url,
+            json={"model": model, "input": text[:_OLLAMA_MAX_CHARS]},
+            timeout=30.0,
+        )
         resp.raise_for_status()
-        return resp.json()["embedding"]
+        return resp.json()["embeddings"][0]
 
     return embed

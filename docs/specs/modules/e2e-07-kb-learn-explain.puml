@@ -1,0 +1,66 @@
+@startuml e2e-07-kb-learn-explain
+skinparam sequenceMessageAlign center
+title E2E-07: kb learn — Initial Explanation
+
+actor User
+participant "CLI\nmain.py" as CLI
+participant "LearnSession\nlearn.py" as LEARN
+participant "Retriever\nretriever.py" as RET
+participant "EmbedFn\n(embedder.py)" as EMB
+participant "VectorStore\n(ChromaDB)" as VS
+participant "PTC\nptc.py" as PTC
+participant "ptc_scripts/\nextract_concepts.py" as SCRIPT
+participant "LocalAdapter\n(shallow)\nor PremiumAdapter\n(deep)" as MODEL
+
+User -> CLI : python cli/main.py kb learn "SSDT" [--depth shallow|deep]
+
+alt index_dir does not exist
+  CLI --> User : Error: Index is empty.\n  Run: python cli/main.py kb index
+end
+
+CLI -> CLI : build LearnSession(\n  retriever, ptc_fn=compress,\n  local, premium, depth)
+
+== Initial Explanation ==
+
+CLI -> LEARN : explain("SSDT")
+
+LEARN -> RET : search("SSDT", top_k=5)
+RET -> EMB : encode("SSDT")
+EMB --> RET : query_vector[N]
+RET -> VS : query(query_vector, n_results=20)
+VS --> RET : [{chunk, score, heading, file}, ...]
+RET -> RET : filter threshold\nsample top_k from top_n
+RET --> LEARN : [Chunk(...), Chunk(...), ...]
+
+alt no chunks returned
+  LEARN --> CLI : ("", [])
+  CLI --> User : "No KB content found for 'SSDT'."
+end
+
+LEARN -> PTC : compress(chunks, "extract_concepts")
+PTC -> SCRIPT : run(chunk_dicts)
+note right : Extracts capitalised domain terms\nper heading — no model call
+SCRIPT --> PTC : "[SSDT Hooking] Concepts: SSDT, Rootkit,\nPatchGuard, System Service Descriptor Table\n[Kernel Callbacks] Concepts: ..."
+PTC --> LEARN : PTCResult(compressed_text, raw_tokens, compressed_tokens)
+
+LEARN -> MODEL : generate(explain_prompt +\n  ptc_result.compressed_text)
+note right : Prompt asks for:\n  Overview / Key Concepts / How They Connect\nRaw KB text never sent to model
+
+MODEL --> LEARN : "Overview: The SSDT maps syscall numbers...\nKey Concepts:\n  • SSDT — kernel dispatch table...\n  • PatchGuard — integrity monitor...\nHow They Connect: Rootkits target SSDT because..."
+LEARN --> CLI : (explanation_text, chunks)
+
+== Output ==
+
+CLI --> User : ════════════════════════\n  Topic: SSDT  [shallow]\n════════════════════════\n\n<explanation text>\n(local)\n\n────────────────────────\nSources:\n  • windows-internals.md › SSDT Hooking\n  • windows-internals.md › Kernel Callbacks
+
+== First Suggestions ==
+
+CLI -> LEARN : suggest(chunks, last_query="SSDT")
+LEARN -> MODEL : generate(suggest_prompt +\n  chunk headings only)
+note right : Prompt includes chunk headings and\nlast_query only — no raw KB text.\nInstructs model to stay within\nlisted headings (mitigates R6)
+MODEL --> LEARN : '["How does PatchGuard detect SSDT\n modifications?", "What is SSDT Shadow?",\n "How do EDRs use callbacks instead?"]'
+LEARN --> CLI : ["Q1", "Q2", "Q3"]
+
+CLI --> User : ────────────────────────\nSuggested follow-ups:\n  [1] How does PatchGuard detect SSDT modifications?\n  [2] What is SSDT Shadow and how does it differ?\n  [3] How do EDRs use kernel callbacks instead?\n\nAsk a follow-up (1-3, your own question, 'quiz', or 'quit'):
+
+@enduml

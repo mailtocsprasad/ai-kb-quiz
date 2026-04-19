@@ -12,9 +12,6 @@ build/
 *.env
 Claude-Key.txt
 
-# Vector index (regenerate locally)
-kb_index/
-
 # Session logs
 logs/
 

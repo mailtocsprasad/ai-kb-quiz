@@ -45,6 +45,7 @@ class Indexer:
         self._cache = ContextCache(index_dir / "context_cache.json")
 
     def build_full(self) -> None:
+        self._store.delete_by_source("generated")
         for path in sorted(self._kb_dir.glob("*.md")):
             self._index_file(path)
         self._cache.save()

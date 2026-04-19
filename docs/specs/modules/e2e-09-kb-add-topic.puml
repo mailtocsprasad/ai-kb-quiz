@@ -1,0 +1,81 @@
+@startuml e2e-09-kb-add-topic
+skinparam sequenceMessageAlign center
+title E2E-09: Add New KB Topic and Incremental Index
+
+actor User
+participant "CLI\nmain.py" as CLI
+participant "Indexer\nindexer.py" as IDX
+participant "Manifest\nmanifest.json" as MAN
+participant "chunker_fn\nchunker.py" as CHK
+participant "ContextCache\ncontext_cache.json" as CC
+participant "EmbedFn\n(embedder.py)" as EMB
+participant "VectorStore\n(ChromaDB)" as VS
+
+== Step 1: Add the file ==
+
+User -> CLI : python cli/main.py kb add new-topic.md
+CLI -> CLI : validate: suffix == ".md"
+
+alt file already exists in kb/
+  CLI --> User : "File already exists. Overwrite? [y/N]"
+  User -> CLI : y
+end
+
+CLI -> CLI : shutil.copy2(src, kb/new-topic.md)
+CLI --> User : "Added kb/new-topic.md.\n  Run 'python cli/main.py kb index' to index it."
+
+note over User, VS : kb list now shows new-topic.md as "not yet indexed ⚠"
+
+== Step 2: List KB status (optional verification) ==
+
+User -> CLI : python cli/main.py kb list
+CLI -> MAN : read manifest.json
+MAN --> CLI : {indexed_files: [existing-files...]}
+CLI --> User : File                    Indexed   Chunks   Last Modified\n──────────────────────────────────────────────────────────────────────\nexisting-topic.md       yes       12       2026-04-10\nnew-topic.md            no        —        2026-04-19  ⚠
+
+== Step 3: Incremental index ==
+
+User -> CLI : python cli/main.py kb index
+CLI -> IDX : build_incremental()
+
+IDX -> MAN : diff(kb_dir)
+note right : Compares current mtime of each .md\nagainst manifest.json snapshot
+MAN --> IDX : FileDiff(\n  new=["new-topic.md"],\n  changed=[],\n  deleted=[]  )
+
+loop for each file in diff.new + diff.changed
+  note over IDX : diff.deleted files: delete_by_source() then skip
+  IDX -> IDX : delete_by_source(path) [for changed files]
+  IDX -> CHK : chunk_markdown(file_text, source_file)
+  CHK --> IDX : [Chunk(heading="Section A", text="...", source_file="new-topic.md"), ...]
+
+  loop for each Chunk
+    IDX -> CC : get(chunk_hash(chunk.text))
+
+    alt cache MISS
+      note right : context_adapter=None in basic mode\n— skip model context call
+      IDX -> IDX : prepared = chunk.text
+    else cache HIT (only relevant if context_adapter set)
+      CC --> IDX : cached_context_string
+      IDX -> IDX : prepared = "{ctx}\n\n{chunk.text}"
+    end
+
+    IDX -> EMB : encode(prepared)
+    EMB --> IDX : vector[N]
+    IDX -> VS : add([chunk_id], [vector],\n        [chunk.text], [{source_file, heading}])
+  end
+
+  IDX -> MAN : update(path)
+end
+
+IDX -> CC : save()
+CLI --> User : "Incremental index update complete."
+
+== Verification ==
+
+User -> CLI : python cli/main.py kb list
+CLI --> User : File                    Indexed   Chunks   Last Modified\n──────────────────────────────────────────────────────────────────────\nexisting-topic.md       yes       12       2026-04-10\nnew-topic.md            yes       4        2026-04-19
+
+User -> CLI : python cli/main.py kb search "new topic keywords" --top 3
+CLI --> User : [1] new-topic.md — Section A\n    <excerpt>...\n[2] ...
+
+@enduml

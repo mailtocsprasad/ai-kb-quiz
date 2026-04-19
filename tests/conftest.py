@@ -1,5 +1,14 @@
+import os
 import pytest
 from pathlib import Path
+
+
+def pytest_collection_modifyitems(config, items):
+    if os.environ.get("CI"):
+        skip_local = pytest.mark.skip(reason="local marker skipped in CI")
+        for item in items:
+            if item.get_closest_marker("local"):
+                item.add_marker(skip_local)
 
 
 class MockAdapter:

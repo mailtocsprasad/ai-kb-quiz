@@ -10,8 +10,8 @@ from engine.embedder import make_embed_fn
 
 @respx.mock
 def test_ollama_returns_embedding():
-    respx.post("http://localhost:11434/api/embeddings").mock(
-        return_value=httpx.Response(200, json={"embedding": [0.1, 0.2, 0.3]})
+    respx.post("http://localhost:11434/api/embed").mock(
+        return_value=httpx.Response(200, json={"embeddings": [[0.1, 0.2, 0.3]]})
     )
     fn = make_embed_fn("nomic-embed-text", backend="ollama")
     assert fn("hello") == [0.1, 0.2, 0.3]
@@ -20,20 +20,20 @@ def test_ollama_returns_embedding():
 @respx.mock
 def test_ollama_sends_correct_model_and_prompt():
     import json
-    route = respx.post("http://localhost:11434/api/embeddings").mock(
-        return_value=httpx.Response(200, json={"embedding": [0.5]})
+    route = respx.post("http://localhost:11434/api/embed").mock(
+        return_value=httpx.Response(200, json={"embeddings": [[0.5]]})
     )
     fn = make_embed_fn("phi4:14b", backend="ollama")
     fn("kernel callbacks")
     payload = json.loads(route.calls[0].request.content)
     assert payload["model"] == "phi4:14b"
-    assert payload["prompt"] == "kernel callbacks"
+    assert payload["input"] == "kernel callbacks"
 
 
 @respx.mock
 def test_ollama_custom_base_url():
-    respx.post("http://myhost:9999/api/embeddings").mock(
-        return_value=httpx.Response(200, json={"embedding": [1.0]})
+    respx.post("http://myhost:9999/api/embed").mock(
+        return_value=httpx.Response(200, json={"embeddings": [[1.0]]})
     )
     fn = make_embed_fn("nomic-embed-text", backend="ollama", ollama_base_url="http://myhost:9999")
     assert fn("test") == [1.0]
@@ -41,7 +41,7 @@ def test_ollama_custom_base_url():
 
 @respx.mock
 def test_ollama_raises_on_http_error():
-    respx.post("http://localhost:11434/api/embeddings").mock(
+    respx.post("http://localhost:11434/api/embed").mock(
         return_value=httpx.Response(500)
     )
     fn = make_embed_fn("nomic-embed-text", backend="ollama")

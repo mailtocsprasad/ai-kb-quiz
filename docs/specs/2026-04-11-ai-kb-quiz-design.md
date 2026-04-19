@@ -87,7 +87,8 @@ Phase 1: CLI. Phase 2: Web UI (interface layer only — engine unchanged).
 | `engine/models/adapter.py` | `ModelAdapter` protocol: `generate(prompt: str) -> str`. |
 | `engine/models/local_adapter.py` | Ollama HTTP API. Graceful degradation if unreachable. |
 | `engine/models/premium_adapter.py` | Anthropic SDK. Resolves API key from env var then key file. |
-| `cli/main.py` | Typer CLI: `quiz`, `kb index`, `kb add`, `kb remove`, `kb list`, `kb search` subcommands. |
+| `engine/learn.py` | `LearnSession`: `explain(topic)`, `follow_up(query)`, `suggest(chunks)`. Stateful REPL controller. Routing: `depth=="deep"` → premium adapter, else local. `suggest()` always uses local adapter and never raises — returns `[]` on failure. Bypasses PTC for suggestions (chunk headings are already compact); uses `"extract_concepts"` for explanations and `"summarize_chunk"` for follow-ups. |
+| `cli/main.py` | Typer CLI: `quiz`, `kb index`, `kb add`, `kb remove`, `kb list`, `kb search`, `kb learn` (interactive REPL: explain → suggest → follow_up loop). |
 | `docs/patterns/` | `ptc-pattern.md`, `programmable-tool-calling.md` — reusable pattern documentation. |
 
 ### Design Decisions (Iteration 1)
@@ -129,6 +130,15 @@ Phase 1: CLI. Phase 2: Web UI (interface layer only — engine unchanged).
 | `evaluate_answer` | `conceptual` | premium | local | premium |
 | `evaluate_answer` | `code` | premium | local | premium |
 | `score_answer` | any | local | local | premium |
+
+### PTC Usage in `kb learn`
+
+`LearnSession` reuses existing PTC scripts — no new scripts required:
+- Initial explanation: `compress(chunks, "extract_concepts")` → model generates structured breakdown
+- Follow-up answers: `compress(chunks, "summarize_chunk")` → model answers the user's question
+- Suggestions: bypasses PTC entirely — prompt receives only chunk headings (already compact, ~5 headings × 30 chars)
+
+`kb learn` routing is not table-driven (unlike the quiz router). `LearnSession` decides directly: `depth == "deep"` → premium; else local. Suggestion generation always uses local (fast, cheap).
 
 ### Design Decisions (Iteration 2)
 
@@ -176,6 +186,14 @@ class Indexer:
 
 class Quiz:
     def __init__(self, retriever, ptc, prog_tool, router, local, premium, scorer, log): ...
+
+class LearnSession:
+    def __init__(self, retriever: Retriever, ptc_fn: Callable,
+                 local: ModelAdapter, premium: ModelAdapter,
+                 depth: str = "shallow"): ...
+    # explain(topic: str) -> tuple[str, list[Chunk]]
+    # follow_up(query: str) -> tuple[str, list[Chunk]]
+    # suggest(chunks: list[Chunk]) -> list[str]   # never raises; returns [] on failure
 ```
 
 ### Test Structure
@@ -279,6 +297,8 @@ Utility
 | R3 | Ollama silent quality degradation (not a crash) | Performance, Observability | Log response token count + latency; surface anomalies in session summary |
 | R4 | Windows atomic rename of directory may fail if handles held | Modifiability | Write to `kb_index.tmp/`; use `os.replace()`; document limitation |
 | R5 | `embedding_model` or `embedding_backend` changed without index rebuild — dimension mismatch or stale vectors | Correctness, Modifiability | Store `embedding_model` and `embedding_backend` in `manifest.json` at index build time; detect mismatch on startup and raise `IndexStaleError` with rebuild instructions |
+| R6 | REPL suggestion hallucination — local model generates follow-up questions about topics outside KB scope; user follows up; retriever finds nothing; confusing dead end | UX, Correctness | Ground suggestion prompt on chunk headings + source filenames only; instruct model to stay within listed headings. Follow-up-not-found path returns graceful message and re-displays last suggestions. |
+| R7 | REPL token cost opacity — multiple model calls per turn (1 answer + 1 suggestion) with no visibility to user; long sessions silently expensive | Observability (QA5) | Tag each response with `(local)` or `(premium)`; print cumulative token estimate at REPL exit |
 
 ### Non-Risks
 
@@ -299,6 +319,7 @@ Utility
 | S3 | PTC `max_output_tokens` | Too low → over-compressed, loses context. Too high → token savings diminish. |
 | S4 | `top_n` / `top_k` ratio | With ~150 total chunks, a 20:5 ratio gives limited diversity. Too small a pool → same chunks every session. Ratio must scale with KB size. |
 | S5 | Embedding model domain fit | General-purpose embedders may not differentiate Windows kernel terminology (e.g., SSDT vs EPROCESS). Poor inter-chunk cosine variance → retrieval returns same cluster for all queries. Validate with a retrieval quality eval before release. |
+| S6 | Suggestion prompt specificity | Too broad → local model generates suggestions outside KB scope (hallucination risk R6). Too narrow → repetitive suggestions across REPL turns. Mitigation: include both chunk headings AND the user's last query in the prompt; instruct to generate 3 distinct questions. |
 
 ### Tradeoff Points
 
@@ -308,6 +329,7 @@ Utility
 | T2 | Ollama graceful degradation | Resource Efficiency ↑ | Observability ↓ (silent quality drop) |
 | T3 | Per-question log flush | Observability ↑ | Performance ↓ (one write/question) |
 | T4 | Local model for fill_in scoring | Resource Efficiency ↑ | Quality ↓ (nuanced scoring less accurate) |
+| T5 | Stateless follow-up queries in REPL | Simplicity ↑, Cost ↑ | Coherence ↓ for pronoun-heavy queries ("How does *it* work?"). Mitigation: `LearnSession` prefixes retrieval query with original topic to anchor the search. |
 
 ### Risk Themes
 
@@ -317,6 +339,8 @@ Utility
 | Windows-specific fragility | R4 | Atomic index swap and Job Object are Win32-specific; M1 Mac needs `DirectRunner` |
 | Index staleness | R5 | Embedding model change silently corrupts retrieval — all downstream quality degrades |
 | Retrieval feedback loop gap | S4, S5 | No signal path from poor question quality back to retrieval tuning; bad questions reinforce user disengagement with no corrective mechanism. Mitigation: log `retrieval_scores` in `QuestionLog`; add retrieval eval before release. |
+| REPL suggestion trust gap | R6, S6 | Local model suggestions appear authoritative but may reference out-of-KB topics; user follows a dead-end suggestion and loses confidence in the tool. Mitigation: ground prompt on headings only; handle empty retrieval gracefully. |
+| REPL cost opacity | R7 | Each REPL turn silently consumes model calls; premium-mode users may exceed expected cost with no signal. Mitigation: per-response model tag + exit summary. |
 
 ---
 

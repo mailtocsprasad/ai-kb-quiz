@@ -186,13 +186,133 @@ CLI → Retriever → EmbedFn (encode query) → VectorStore.query() → List[Ch
 
 ---
 
+---
+
+## E2E-07: kb learn — Initial Explanation
+
+### User perspective
+
+The user runs `kb learn` on a topic they want to study before or after a quiz. They see a structured explanation (Overview / Key Concepts / How They Connect) followed by the KB sources and up to 3 suggested follow-up questions. The REPL prompt then opens for interactive follow-up.
+
+```
+$ python cli/main.py kb learn "SSDT"
+
+════════════════════════════════════════════════════════════
+  Topic: SSDT  [shallow]
+════════════════════════════════════════════════════════════
+
+Overview: The SSDT maps syscall numbers to kernel addresses...
+Key Concepts:
+  • SSDT — kernel dispatch table for system calls
+  • PatchGuard — integrity monitor that detects SSDT tampering
+How They Connect: Rootkits overwrite SSDT entries because...
+(local)
+
+────────────────────────────────────────────────────────────
+Sources:
+  • windows-internals.md › SSDT Hooking
+  • windows-internals.md › Kernel Callbacks
+
+────────────────────────────────────────────────────────────
+Suggested follow-ups:
+  [1] How does PatchGuard detect SSDT modifications?
+  [2] What is SSDT Shadow and how does it differ?
+  [3] How do EDRs use kernel callbacks instead of SSDT hooking?
+
+Ask a follow-up (1-3, your own question, 'quiz', or 'quit'):
+```
+
+### System perspective
+
+CLI → `LearnSession.explain(topic)` → Retriever → EmbedFn → VectorStore → PTC (`extract_concepts`) → LocalAdapter (shallow) or PremiumAdapter (deep) → explanation. Then → `LearnSession.suggest(chunks, last_query)` → LocalAdapter (always local) → suggestions. Raw KB text never reaches any model.
+
+![kb learn — initial explanation](e2e-07-kb-learn-explain.png)
+
+---
+
+## E2E-08: kb learn — REPL Loop (Follow-up + Suggestions)
+
+### User perspective
+
+After the initial explanation the user can ask follow-up questions (typed freely or by picking a numbered suggestion). Each turn produces a fresh answer from the KB and a new set of suggestions. The user can type `quiz` to start a quiz session or `quit` (or Ctrl+C) to exit cleanly.
+
+```
+Ask a follow-up (1-3, your own question, 'quiz', or 'quit'): 2
+  → What is SSDT Shadow and how does it differ?
+
+The SSDT Shadow is a separate dispatch table used by Win32k.sys...
+(local)
+
+────────────────────────────────────────────────────────────
+Sources:
+  • windows-internals.md › SSDT Shadow
+
+────────────────────────────────────────────────────────────
+Suggested follow-ups:
+  [1] How does PatchGuard protect SSDT Shadow?
+  [2] What is KeServiceDescriptorTable?
+  [3] How do AV products hook SSDT Shadow?
+
+Ask a follow-up (1-3, your own question, 'quiz', or 'quit'): quiz
+Quiz yourself: python cli/main.py quiz --topic 'SSDT'
+
+Session ended. Tokens used (approx): 420
+```
+
+If the follow-up query finds no KB content the REPL shows a message, re-displays the last suggestions, and continues — it never crashes.
+
+### System perspective
+
+CLI → digit/text resolution → `LearnSession.follow_up(query)` (anchored as `"{topic}: {query}"`) → Retriever → VectorStore → PTC (`summarize_chunk`) → adapter → answer. Then → `LearnSession.suggest(new_chunks, last_query)` → LocalAdapter → suggestions. `suggest()` wraps in try/except — returns `[]` on any failure without breaking the REPL.
+
+![kb learn — REPL loop](e2e-08-kb-learn-repl.png)
+
+---
+
+## E2E-09: Add New KB Topic and Incremental Index
+
+### User perspective
+
+The user adds a new markdown file to the KB via `kb add`, verifies it appears as "not yet indexed" in `kb list`, then runs `kb index` to pick it up. Only the new file is processed — existing indexed files are skipped.
+
+```
+$ python cli/main.py kb add ~/notes/new-topic.md
+Added kb/new-topic.md. Run 'python cli/main.py kb index' to index it.
+
+$ python cli/main.py kb list
+File                     Indexed   Chunks   Last Modified
+───────────────────────────────────────────────────────────────────
+existing-topic.md        yes       12       2026-04-10
+new-topic.md             no        —        2026-04-19  ⚠
+
+$ python cli/main.py kb index
+Incremental index update complete.
+
+$ python cli/main.py kb list
+File                     Indexed   Chunks   Last Modified
+───────────────────────────────────────────────────────────────────
+existing-topic.md        yes       12       2026-04-10
+new-topic.md             yes       4        2026-04-19
+```
+
+### System perspective
+
+`kb add`: validate suffix, copy to `kb/`, print instruction. `kb index` (incremental): Manifest.diff() detects `new=["new-topic.md"]` → chunker → EmbedFn → VectorStore.add() → Manifest.update(). Unchanged files produce zero model or embed calls.
+
+![Add new KB topic and incremental index](e2e-09-kb-add-topic.png)
+
+---
+
 ## Scenario Comparison
 
 | Scenario | User action | User sees | Premium calls | Local calls | Fallback |
 |---|---|---|---|---|---|
-| Full KB index | `kb index` | Progress per file, chunk count | 1 per unique chunk (context) | — | Cache hit skips model |
-| Incremental index | `kb index --incremental` | new/changed/deleted counts | 0 (cache hits) | — | — |
+| Full KB index | `kb index --rebuild` | Completion message | 1 per unique chunk (context, optional) | — | Cache hit skips model |
+| Incremental index | `kb index` | Completion message | 0 (cache hits) | — | — |
+| Add + index new topic | `kb add` then `kb index` | List shows ⚠ then yes | 0 | — | — |
 | Quiz — conceptual | `quiz --topic X`, free-text answer | Question, score 0/0.5/1.0, feedback | 2 (generate + evaluate) | — | — |
 | Quiz — fill_in | `quiz --topic X`, short answer | Question, score 0/0.5/1.0, correct term | 0 | 1 (generate) | difflib scoring |
 | Prog Tool Calling | transparent | Nothing (or same quiz question) | 1 (script gen) | — | PTCResult on any failure |
 | KB search | `kb search "query"` | Ranked results with scores | 0 | — | IndexNotFoundError |
+| kb learn — explain | `kb learn "topic"` | Structured explanation + suggestions | 0 (shallow) or 1 (deep) | 1 (explain) + 1 (suggest) | No explanation if topic not in KB |
+| kb learn — follow-up | Type question in REPL | Answer + new suggestions | 0 (shallow) or 1 (deep) | 1 (answer) + 1 (suggest) | Empty retrieve → friendly message, re-show suggestions |

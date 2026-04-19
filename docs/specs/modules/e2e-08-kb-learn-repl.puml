@@ -1,0 +1,72 @@
+@startuml e2e-08-kb-learn-repl
+skinparam sequenceMessageAlign center
+title E2E-08: kb learn — REPL Loop (Follow-up + Suggestions)
+
+actor User
+participant "CLI\nmain.py" as CLI
+participant "LearnSession\nlearn.py" as LEARN
+participant "Retriever\nretriever.py" as RET
+participant "VectorStore\n(ChromaDB)" as VS
+participant "EmbedFn\n(embedder.py)" as EMB
+participant "PTC\nptc.py" as PTC
+participant "ptc_scripts/\nsummarize_chunk.py" as SCRIPT
+participant "LocalAdapter\nor PremiumAdapter" as MODEL
+
+note over CLI : Enters REPL after initial explanation\n(see E2E-07). last_chunks and last_query\nare retained between turns.
+
+== REPL Turn: User selects numbered suggestion ==
+
+User -> CLI : "2"
+CLI -> CLI : resolve input "2" → suggestions[1]\n= "What is SSDT Shadow and how does it differ?"
+CLI --> User : → What is SSDT Shadow and how does it differ?
+
+CLI -> LEARN : follow_up("What is SSDT Shadow and how does it differ?")
+LEARN -> LEARN : anchored = "SSDT: What is SSDT Shadow\n  and how does it differ?"
+LEARN -> RET : search(anchored, top_k=5)
+RET -> EMB : encode(anchored)
+EMB --> RET : query_vector[N]
+RET -> VS : query(query_vector, n_results=20)
+VS --> RET : [{chunk, score, heading, file}, ...]
+RET --> LEARN : [Chunk(...), ...]
+
+alt no chunks returned
+  LEARN --> CLI : ("", [])
+  CLI --> User : "No KB content found for that question.\n  Try a different phrasing."
+  CLI --> User : [re-display previous suggestions]
+  note right : REPL loop continues\nwith last_chunks / last_query unchanged
+end
+
+LEARN -> PTC : compress(chunks, "summarize_chunk")
+PTC -> SCRIPT : run(chunk_dicts)
+note right : Extracts first 2 sentences per section\n— no model call
+SCRIPT --> PTC : "[SSDT Shadow] The SSDT Shadow is a copy of\nthe SSDT used exclusively for Win32k.sys...\n[Kernel Callbacks] ..."
+PTC --> LEARN : PTCResult(compressed_text, raw_tokens, compressed_tokens)
+
+LEARN -> MODEL : generate(answer_prompt +\n  ptc_result.compressed_text)
+MODEL --> LEARN : "The SSDT Shadow is a separate dispatch table\nused by Win32k.sys for GUI subsystem calls.\nUnlike the main SSDT it is not protected by..."
+LEARN --> CLI : (answer_text, new_chunks)
+
+CLI --> User : <answer text>\n(local)\n\n────────────────────────\nSources:\n  • windows-internals.md › SSDT Shadow
+
+== New Suggestions for this turn ==
+
+CLI -> LEARN : suggest(new_chunks, last_query="What is SSDT Shadow...")
+LEARN -> MODEL : generate(suggest_prompt +\n  new chunk headings + last_query)
+note right : Always uses local adapter.\nNever raises — returns [] on failure (PM4).
+MODEL --> LEARN : '["How does PatchGuard protect\n SSDT Shadow?", "What is KeServiceDescriptorTable?",\n "How do AV products hook SSDT Shadow?"]'
+LEARN --> CLI : ["Q1", "Q2", "Q3"]
+
+CLI --> User : ────────────────────────\nSuggested follow-ups:\n  [1] How does PatchGuard protect SSDT Shadow?\n  [2] What is KeServiceDescriptorTable?\n  [3] How do AV products hook SSDT Shadow?\n\nAsk a follow-up (1-3, your own question, 'quiz', or 'quit'):
+
+== REPL Turn: User types 'quiz' ==
+
+User -> CLI : "quiz"
+CLI --> User : Quiz yourself: python cli/main.py quiz --topic 'SSDT'\n\nSession ended. Tokens used (approx): 420
+
+== REPL Turn: User types 'quit' or Ctrl+C ==
+
+User -> CLI : "quit"  [or Ctrl+C]
+CLI --> User : Session ended. Tokens used (approx): 420
+note right : KeyboardInterrupt caught cleanly (PM3).\nNo stack trace.
+
+@enduml

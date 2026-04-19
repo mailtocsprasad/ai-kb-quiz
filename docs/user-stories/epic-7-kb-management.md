@@ -93,4 +93,48 @@ Feature: Topic learning from KB
     When I run: python cli/main.py kb learn "SSDT"
     Then the CLI prints "Index is empty. Run: python cli/main.py kb index"
     And exits with a non-zero code
+
+  Scenario: Interactive REPL starts after initial explanation
+    Given the kb learn explanation is displayed for a known topic
+    Then the CLI enters a REPL loop
+    And displays up to 3 numbered follow-up suggestions grounded in the retrieved chunks
+    And prompts: "Ask a follow-up (1-3, your own question, 'quiz', or 'quit'):"
+
+  Scenario: User selects a numbered suggestion
+    Given 3 suggestions are displayed
+    When I type "2"
+    Then the CLI retrieves KB chunks relevant to suggestion [2]
+    And answers using PTC compression + local or premium model (based on --depth)
+    And displays a new set of up to 3 suggestions after the answer
+
+  Scenario: User asks a free-form follow-up question
+    Given the REPL is active
+    When I type "How does PatchGuard detect SSDT modifications?"
+    Then the CLI retrieves KB chunks for the follow-up query anchored to the original topic
+    And answers using PTC + local or premium model
+    And displays a new set of up to 3 suggestions
+
+  Scenario: Follow-up topic not found in KB
+    Given the REPL is active
+    When I type a follow-up question with no matching KB content
+    Then the CLI prints "No KB content found for that question"
+    And re-displays the previous suggestions without error
+    And remains in the REPL loop
+
+  Scenario: User types 'quiz' in the REPL
+    Given the REPL is active with topic "SSDT"
+    When I type "quiz"
+    Then the CLI prints "Quiz yourself: python cli/main.py quiz --topic 'SSDT'"
+    And exits the REPL cleanly
+
+  Scenario: User exits the REPL
+    Given the REPL is active
+    When I type "quit" or press Ctrl+C
+    Then the REPL exits cleanly with no stack trace
+
+  Scenario: Suggestion generation fails gracefully
+    Given the local model is unavailable (Ollama unreachable)
+    When a suggestion call is attempted after an explanation or follow-up
+    Then the CLI shows the answer without suggestions
+    And the REPL prompt still appears so the user can continue
 ```
