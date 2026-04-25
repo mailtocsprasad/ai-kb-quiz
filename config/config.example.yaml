@@ -13,8 +13,8 @@ mode: hybrid
 #
 #   Model              VRAM     Best for
 #   ────────────────────────────────────────────────────────────
-#   qwen2.5:14b  (Q4)  ~8.7 GB  Technical reasoning ← recommended
-#   phi4:14b     (Q4)  ~8.5 GB  Structured output, JSON, scoring
+#   phi4:14b     (Q4)  ~8.5 GB  Structured output, JSON, scoring ← recommended
+#   qwen2.5:14b  (Q4)  ~8.7 GB  Technical reasoning
 #   llama3.1:8b  (Q4)  ~4.7 GB  Fastest local tier, general fallback
 #
 # CPU-only model guide (no discrete GPU):
@@ -27,7 +27,7 @@ mode: hybrid
 #   qwen2.5-coder:7b(Q4) ~5.5 GB  Code-heavy KB topics
 #   mistral:7b   (Q4)    ~5.5 GB  General (fine-tuning friendly)
 #
-local_model: qwen2.5:14b
+local_model: phi4:14b
 
 # Premium model (Anthropic Claude)
 premium_model: claude-sonnet-4-6
