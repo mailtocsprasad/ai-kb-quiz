@@ -19,6 +19,7 @@ from engine.question import Chunk
 log = logging.getLogger(__name__)
 
 _EMBED_MAX_CHARS = 2000
+_MIN_STORE_CHARS = 200  # drafts shorter than this are model refusals or empty — don't store
 
 
 def _strip_markdown(text: str) -> str:
@@ -65,7 +66,8 @@ class LearnSession:
         log.debug("[ptc] %.2fs — %d→%d tokens", _t() - t0, ptc_result.raw_tokens, ptc_result.compressed_tokens)
 
         prompt = (
-            f"Explain the topic '{self._topic}' using this content:\n\n"
+            f"Explain '{self._topic}' using the content below. "
+            f"Focus strictly on '{self._topic}', omit unrelated details, preserve technical accuracy.\n\n"
             f"{ptc_result.compressed_text}"
         )
         t0 = _t()
@@ -131,8 +133,9 @@ class LearnSession:
         log.debug("[ptc] %.2fs — %d→%d tokens", _t() - t0, ptc_result.raw_tokens, ptc_result.compressed_tokens)
 
         prompt = (
-            f"Answer this question: '{question}'\n\n"
-            f"Using this content:\n\n{ptc_result.compressed_text}"
+            f"Answer '{question}' about '{self._topic}' using the content below. "
+            f"Be specific and accurate. No preamble.\n\n"
+            f"{ptc_result.compressed_text}"
         )
         t0 = _t()
         draft = self._adapter.generate(prompt)
@@ -142,10 +145,12 @@ class LearnSession:
         return result, chunks
 
     def _refine_and_store(self, draft: str, heading: str, chunks: list[Chunk]) -> str:
-        if not self._refine_adapter:
-            return draft
         if chunks and all(c.source_file == "generated" for c in chunks):
             log.debug("[refine] skipped — all chunks already generated")
+            return draft
+        if not self._refine_adapter:
+            if draft and self._embed_fn and self._store:
+                self._store_generated(draft, heading)
             return draft
         t0 = _t()
         refine_prompt = (
@@ -160,6 +165,9 @@ class LearnSession:
         return refined
 
     def _store_generated(self, text: str, heading: str) -> None:
+        if len(text) < _MIN_STORE_CHARS:
+            log.debug("[store] skipped — draft too short (%d chars)", len(text))
+            return
         t0 = _t()
         chunk_id = "generated:" + hashlib.sha256(
             f"{heading}:{text}".encode()

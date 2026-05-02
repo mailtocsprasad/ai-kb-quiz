@@ -45,8 +45,8 @@ class Indexer:
         self._cache = ContextCache(index_dir / "context_cache.json")
 
     def build_full(self) -> None:
-        self._store.delete_by_source("generated")
-        for path in sorted(self._kb_dir.glob("*.md")):
+        self._store.clear()
+        for path in sorted(self._kb_dir.rglob("*.md")):
             self._index_file(path)
         self._cache.save()
 
@@ -77,8 +77,11 @@ class Indexer:
         self._manifest.update(path)
 
     def _prepare(self, chunk, file_path: str) -> str:
+        # Always prefix with heading so the embedding captures topic context,
+        # not just raw paragraph text (recommended by asymmetric RAG literature).
+        heading_prefix = f"{chunk.heading}\n\n" if chunk.heading else ""
         if self._context_adapter is None:
-            return chunk.text
+            return f"{heading_prefix}{chunk.text}"
         ctx = self._cache.get(chunk.text)
         if ctx is None:
             prompt = _CONTEXT_PROMPT.format(
@@ -88,4 +91,4 @@ class Indexer:
             )
             ctx = self._context_adapter.generate(prompt)
             self._cache.set(chunk.text, ctx)
-        return f"{ctx}\n\n{chunk.text}" if ctx else chunk.text
+        return f"{ctx}\n\n{heading_prefix}{chunk.text}" if ctx else f"{heading_prefix}{chunk.text}"

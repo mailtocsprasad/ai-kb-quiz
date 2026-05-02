@@ -69,6 +69,20 @@ class VectorStore:
             return []
         return self._col.get()["ids"]
 
+    def get_all(self) -> list[dict]:
+        """Return all stored chunks as dicts with id, document, and metadata."""
+        if self.count() == 0:
+            return []
+        result = self._col.get(include=["documents", "metadatas"])
+        return [
+            {
+                "id": result["ids"][i],
+                "document": result["documents"][i],
+                "metadata": result["metadatas"][i],
+            }
+            for i in range(len(result["ids"]))
+        ]
+
     def delete_by_source(self, source_file: str) -> None:
         """Delete all chunks whose metadata source_file matches the given path."""
         if self.count() == 0:
@@ -76,3 +90,10 @@ class VectorStore:
         result = self._col.get(where={"source_file": {"$eq": source_file}})
         if result["ids"]:
             self._col.delete(ids=result["ids"])
+
+    def clear(self) -> None:
+        """Drop and recreate the collection, removing all documents."""
+        name = self._col.name
+        metadata = self._col.metadata
+        self._client.delete_collection(name)
+        self._col = self._client.get_or_create_collection(name=name, metadata=metadata)

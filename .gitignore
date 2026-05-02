@@ -11,6 +11,8 @@ build/
 .env
 *.env
 Claude-Key.txt
+Gemini-Key.txt
+Test.txt
 
 # Session logs
 logs/

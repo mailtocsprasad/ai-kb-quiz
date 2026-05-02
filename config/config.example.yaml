@@ -29,30 +29,51 @@ mode: hybrid
 #
 local_model: phi4:14b
 
-# Premium model (Anthropic Claude)
-premium_model: claude-sonnet-4-6
+# Premium provider: "anthropic" (default) or "gemini"
+premium_provider: anthropic
 
+# Anthropic Claude — used when premium_provider: anthropic
+premium_model: claude-sonnet-4-6
 # API key resolution — tried in order, first match wins:
 #   1. ANTHROPIC_API_KEY environment variable
 #   2. api_key_file path below (gitignored, never committed)
-# Claude-Key.txt is copied locally and gitignored — never committed.
 api_key_file: Claude-Key.txt
+
+# Google Gemini — used when premium_provider: gemini
+gemini_model: gemini-2.5-flash
+# API key resolution — tried in order, first match wins:
+#   1. GEMINI_API_KEY environment variable
+#   2. gemini_api_key_file path below (gitignored, never committed)
+gemini_api_key_file: Gemini-Key.txt
 
 # Embedding backend and model for KB vector index
 #
 # embedding_backend:
-#   "ollama"                — served via Ollama /api/embeddings (recommended if Ollama installed)
-#   "sentence-transformers" — runs via sentence-transformers Python library (no Ollama needed)
+#   "auto"                  — detect best available: gemini → ollama → sentence-transformers
+#                             choice is locked in kb_index/backend_lock.json on first index build
+#                             run kb index --rebuild to re-detect after changing credentials
+#   "gemini"                — Gemini embedding API (recommended — uses task types for asymmetric RAG)
+#   "ollama"                — served via Ollama /api/embeddings (local, no API key needed)
+#   "sentence-transformers" — runs via sentence-transformers Python library (CPU fallback)
+#
+# Gemini embedding models:
+#   gemini-embedding-001   768-dim, GA standard, top MTEB multilingual ← recommended
+#   gemini-embedding-2     3072-dim, multimodal (text + images + audio)
+#
+# embedding_dimensions: MRL truncation for gemini backend (768 = optimal sweet spot)
+#   768 dim → 75% storage reduction vs 3072-dim, rivals dedicated 768-dim legacy models
+#   Must match between indexing and querying — full rebuild required if changed.
 #
 # Ollama embedding models (pull with: ollama pull <model>):
-#   nomic-embed-text   768-dim, strong semantic quality  ← recommended
+#   nomic-embed-text   768-dim, strong semantic quality
 #   all-minilm         384-dim, fast and lightweight
-#   qwen3-embedding    1024-dim, highest quality
 #
 # sentence-transformers models (auto-downloaded from HuggingFace on first run):
 #   all-MiniLM-L6-v2   384-dim, CPU-friendly fallback
 #
-embedding_backend: ollama
+embedding_backend: gemini
+gemini_embedding_model: gemini-embedding-001
+embedding_dimensions: 768
 embedding_model: nomic-embed-text
 
 # Quiz settings

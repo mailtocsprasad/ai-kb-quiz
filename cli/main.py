@@ -17,6 +17,14 @@ app.add_typer(kb_app, name="kb")
 
 _DEFAULT_CONFIG = Path("config/config.yaml")
 
+_LEARN_SYSTEM_PROMPT = (
+    "You are a technical tutor explaining concepts from a knowledge base. "
+    "Give a thorough, well-structured explanation. "
+    "Use numbered steps or bullet points where they aid clarity. "
+    "Include specific technical details, values, and examples from the content. "
+    "Do not summarise — teach."
+)
+
 
 def _load_config(config_path: Path = _DEFAULT_CONFIG) -> dict:
     if not config_path.exists():
@@ -28,12 +36,107 @@ def _load_config(config_path: Path = _DEFAULT_CONFIG) -> dict:
     return yaml.safe_load(config_path.read_text(encoding="utf-8"))
 
 
+def _gemini_api_key(cfg: dict) -> str:
+    import os
+    key = os.environ.get("GEMINI_API_KEY")
+    if not key:
+        key_file = Path(cfg.get("gemini_api_key_file", "Gemini-Key.txt"))
+        if key_file.exists():
+            lines = key_file.read_text().splitlines()
+            key = next((l.strip() for l in lines if l.strip().startswith("AIza")), "")
+    if not key:
+        raise EnvironmentError(
+            "No Gemini API key found for embedding. "
+            "Set GEMINI_API_KEY or configure gemini_api_key_file in config.yaml."
+        )
+    return key
+
+
+def _detect_embedding_backend(cfg: dict) -> tuple[str, str, int | None]:
+    """Probe available backends in priority order: gemini → ollama → sentence-transformers.
+
+    Returns (backend, model, dimensions). dimensions is None for non-gemini backends
+    because their output size is fixed by the model, not a configurable parameter.
+    """
+    import os
+    key = os.environ.get("GEMINI_API_KEY")
+    if not key:
+        key_file = Path(cfg.get("gemini_api_key_file", "Gemini-Key.txt"))
+        if key_file.exists():
+            lines = key_file.read_text().splitlines()
+            key = next((l.strip() for l in lines if l.strip().startswith("AIza")), "")
+    if key:
+        return (
+            "gemini",
+            cfg.get("gemini_embedding_model", "gemini-embedding-001"),
+            cfg.get("embedding_dimensions", 768),
+        )
+
+    try:
+        import httpx
+        resp = httpx.get("http://localhost:11434/api/tags", timeout=2.0)
+        if resp.status_code == 200:
+            return ("ollama", cfg.get("embedding_model", "nomic-embed-text"), None)
+    except Exception:
+        pass
+
+    return ("sentence-transformers", cfg.get("embedding_model", "all-MiniLM-L6-v2"), None)
+
+
+def _resolve_backend(cfg: dict) -> dict:
+    """If embedding_backend is 'auto', resolve to a concrete backend via the lock file.
+
+    Reads the lock if it exists. Detects and writes the lock on first call.
+    Returns a cfg dict with embedding_backend set to a concrete value.
+    """
+    if cfg.get("embedding_backend") != "auto":
+        return cfg
+
+    from engine.backend_lock import read_lock, write_lock
+    lock = read_lock()
+    if not lock:
+        backend, model, dims = _detect_embedding_backend(cfg)
+        write_lock(backend, model, dims)
+        lock = {"backend": backend, "model": model, "dimensions": dims}
+        typer.echo(f"[auto] Embedding backend: {backend} ({model})")
+
+    resolved = dict(cfg)
+    resolved["embedding_backend"] = lock["backend"]
+    if lock["backend"] == "gemini":
+        resolved["gemini_embedding_model"] = lock["model"]
+        resolved["embedding_dimensions"] = lock["dimensions"]
+    else:
+        resolved["embedding_model"] = lock["model"]
+    return resolved
+
+
+def _make_embed_fn(cfg: dict, task_type: str = "RETRIEVAL_DOCUMENT"):
+    """Create an embed function from config. task_type only applies to the gemini backend."""
+    cfg = _resolve_backend(cfg)
+    backend = cfg.get("embedding_backend", "sentence-transformers")
+    model = cfg.get("embedding_model", "all-MiniLM-L6-v2")
+    if backend == "gemini":
+        return make_embed_fn(
+            model=cfg.get("gemini_embedding_model", "gemini-embedding-001"),
+            backend="gemini",
+            task_type=task_type,
+            api_key=_gemini_api_key(cfg),
+            output_dimensionality=cfg.get("embedding_dimensions", 768),
+        )
+    return make_embed_fn(model=model, backend=backend)
+
+
+def _index_dir_for(cfg: dict) -> Path:
+    """Per-backend index directory — switching backends never requires a rebuild."""
+    slug = cfg.get("embedding_backend", "sentence-transformers").replace("-", "_")
+    return Path("kb_index") / slug
+
+
 def _make_retriever(cfg: dict) -> Retriever:
-    embed_fn = make_embed_fn(
-        model=cfg.get("embedding_model", "all-MiniLM-L6-v2"),
-        backend=cfg.get("embedding_backend", "sentence-transformers"),
-    )
-    return Retriever(index_dir=Path("kb_index"), embed_fn=embed_fn)
+    cfg = _resolve_backend(cfg)
+    # Queries use RETRIEVAL_QUERY so the vector hunts for answers, not similar phrasing.
+    embed_fn = _make_embed_fn(cfg, task_type="RETRIEVAL_QUERY")
+    return Retriever(index_dir=_index_dir_for(cfg), embed_fn=embed_fn)
 
 
 # ---------------------------------------------------------------------------
@@ -45,14 +148,12 @@ def kb_index(rebuild: bool = typer.Option(False, "--rebuild", help="Force full r
     """Build or update the KB vector index."""
     from engine.indexer import Indexer
 
-    cfg = _load_config()
-    embed_fn = make_embed_fn(
-        model=cfg.get("embedding_model", "all-MiniLM-L6-v2"),
-        backend=cfg.get("embedding_backend", "sentence-transformers"),
-    )
+    cfg = _resolve_backend(_load_config())
+    # Indexing uses RETRIEVAL_DOCUMENT so chunks advertise their informational payload.
+    embed_fn = _make_embed_fn(cfg, task_type="RETRIEVAL_DOCUMENT")
     kb_dir = Path("kb")
     kb_dir.mkdir(exist_ok=True)
-    indexer = Indexer(kb_dir=kb_dir, index_dir=Path("kb_index"), embed_fn=embed_fn)
+    indexer = Indexer(kb_dir=kb_dir, index_dir=_index_dir_for(cfg), embed_fn=embed_fn)
     typer.echo("Building KB index...")
     if rebuild:
         indexer.build_full()
@@ -76,19 +177,28 @@ def kb_list():
         typer.echo("kb/ directory not found.")
         raise typer.Exit(code=1)
 
-    manifest_path = Path("kb_index/manifest.json")
+    cfg = _resolve_backend(_load_config())
+    backend = cfg.get("embedding_backend", "sentence-transformers")
+    manifest_path = _index_dir_for(cfg) / "manifest.json"
     indexed: set[str] = set()
     if manifest_path.exists():
         data = json.loads(manifest_path.read_text())
-        indexed = {Path(k).name for k in data}
+        for k in data:
+            p = Path(k)
+            try:
+                indexed.add(str(p.relative_to(kb_dir)))
+            except ValueError:
+                indexed.add(p.name)
 
-    typer.echo(f"{'File':<35} {'Indexed':<10} {'Last Modified'}")
-    typer.echo("-" * 65)
-    for f in sorted(kb_dir.glob("*.md")):
-        status = "yes" if f.name in indexed else "no"
+    typer.echo(f"[backend: {backend}]")
+    typer.echo(f"{'File':<65} {'Indexed':<10} {'Last Modified'}")
+    typer.echo("-" * 90)
+    for f in sorted(kb_dir.rglob("*.md")):
+        rel = str(f.relative_to(kb_dir))
+        status = "yes" if rel in indexed else "no"
         mdate = datetime.fromtimestamp(f.stat().st_mtime).strftime("%Y-%m-%d")
         warn = "" if status == "yes" else " ⚠"
-        typer.echo(f"{f.name:<35} {status:<10} {mdate}{warn}")
+        typer.echo(f"{rel:<65} {status:<10} {mdate}{warn}")
 
 
 # ---------------------------------------------------------------------------
@@ -96,7 +206,10 @@ def kb_list():
 # ---------------------------------------------------------------------------
 
 @kb_app.command("add")
-def kb_add(filepath: str = typer.Argument(..., help="Path to .md file to add")):
+def kb_add(
+    filepath: str = typer.Argument(..., help="Path to .md file to add"),
+    subdir: Optional[str] = typer.Option(None, "--subdir", help="Subdirectory within kb/ (e.g. windows-kernel)"),
+):
     """Add a markdown file to the KB."""
     src = Path(filepath)
     if src.suffix != ".md":
@@ -104,7 +217,9 @@ def kb_add(filepath: str = typer.Argument(..., help="Path to .md file to add")):
         raise typer.Exit(code=1)
     kb_dir = Path("kb")
     kb_dir.mkdir(exist_ok=True)
-    dest = kb_dir / src.name
+    target_dir = kb_dir / subdir if subdir else kb_dir
+    target_dir.mkdir(parents=True, exist_ok=True)
+    dest = target_dir / src.name
     if dest.exists():
         if not typer.confirm(f"{dest} already exists. Overwrite?", default=False):
             raise typer.Exit(code=0)
@@ -185,11 +300,7 @@ def kb_learn(
     from engine.models.premium_adapter import PremiumAdapter
     from engine.store import VectorStore
 
-    cfg = _load_config()
-    embed_fn = make_embed_fn(
-        model=cfg.get("embedding_model", "all-MiniLM-L6-v2"),
-        backend=cfg.get("embedding_backend", "sentence-transformers"),
-    )
+    cfg = _resolve_backend(_load_config())
     try:
         retriever = _make_retriever(cfg)
     except IndexNotFoundError:
@@ -197,29 +308,42 @@ def kb_learn(
         raise typer.Exit(code=1)
 
     local = LocalAdapter(model=cfg.get("local_model", "phi4-mini"))
-    refine_adapter = None
+    is_deep = False
     if depth == "deep":
+        provider = cfg.get("premium_provider", "anthropic")
         try:
-            premium: object = PremiumAdapter.from_config(
-                model=cfg.get("premium_model", "claude-sonnet-4-6"),
-                api_key_file=Path(cfg.get("api_key_file", "Claude-Key.txt")),
-            )
-            refine_adapter = premium
-        except EnvironmentError:
-            typer.echo("Premium model unavailable — falling back to local.")
+            if provider == "gemini":
+                from engine.models.gemini_adapter import GeminiAdapter
+                premium: object = GeminiAdapter.from_config(
+                    model=cfg.get("gemini_model", "gemini-2.5-flash"),
+                    api_key_file=Path(cfg.get("gemini_api_key_file", "Gemini-Key.txt")),
+                    system_prompt=_LEARN_SYSTEM_PROMPT,
+                )
+            else:
+                premium = PremiumAdapter.from_config(
+                    model=cfg.get("premium_model", "claude-sonnet-4-6"),
+                    api_key_file=Path(cfg.get("api_key_file", "Claude-Key.txt")),
+                    system_prompt=_LEARN_SYSTEM_PROMPT,
+                )
+            is_deep = True
+        except EnvironmentError as e:
+            typer.echo(f"Premium model unavailable ({e}) — falling back to local.")
             premium = local
     else:
         premium = local
 
-    store = VectorStore(Path("kb_index/chroma")) if refine_adapter else None
+    # Storage embed fn uses RETRIEVAL_DOCUMENT — generated chunks go back into the index.
+    # Only created in deep mode to avoid an unnecessary API client in local mode.
+    store_embed_fn = _make_embed_fn(cfg, task_type="RETRIEVAL_DOCUMENT") if is_deep else None
+    store = VectorStore(_index_dir_for(cfg) / "chroma") if is_deep else None
 
     session = LearnSession(
         topic=topic,
         retriever=retriever,
         adapter=premium,
         suggest_adapter=local,
-        refine_adapter=refine_adapter,
-        embed_fn=embed_fn if refine_adapter else None,
+        refine_adapter=None,
+        embed_fn=store_embed_fn,
         store=store,
     )
 
@@ -289,7 +413,7 @@ def kb_learn(
 def _print_sources(chunks) -> None:
     if not chunks:
         return
-    typer.echo(f"\n{'─'*60}")
+    typer.echo(f"\n{'-'*60}")
     typer.echo("Sources:")
     seen: set[str] = set()
     for c in chunks:
@@ -302,7 +426,7 @@ def _print_sources(chunks) -> None:
 def _print_suggestions(suggestions: list[str]) -> None:
     if not suggestions:
         return
-    typer.echo(f"\n{'─'*60}")
+    typer.echo(f"\n{'-'*60}")
     typer.echo("Suggested follow-ups:")
     for i, s in enumerate(suggestions, 1):
         typer.echo(f"  [{i}] {s}")

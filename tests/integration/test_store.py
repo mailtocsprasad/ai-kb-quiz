@@ -97,3 +97,28 @@ def test_delete_by_source_unknown_file_is_noop(store):
 def test_delete_by_source_on_empty_store_is_noop(store):
     store.delete_by_source("any.md")
     assert store.count() == 0
+
+
+def test_clear_removes_all_documents(store):
+    store.add(
+        ids=["a", "b", "c"],
+        embeddings=[[1.0, 0.0], [0.0, 1.0], [0.5, 0.5]],
+        documents=["doc a", "doc b", "doc c"],
+        metadatas=[{}, {}, {}],
+    )
+    assert store.count() == 3
+    store.clear()
+    assert store.count() == 0
+
+
+def test_clear_allows_new_adds_after_clear(store):
+    store.add(ids=["a"], embeddings=[[1.0, 0.0]], documents=["doc"], metadatas=[{}])
+    store.clear()
+    store.add(ids=["b"], embeddings=[[0.0, 1.0]], documents=["new doc"], metadatas=[{}])
+    assert store.count() == 1
+    assert store.get_ids() == ["b"]
+
+
+def test_clear_on_empty_store_is_noop(store):
+    store.clear()
+    assert store.count() == 0

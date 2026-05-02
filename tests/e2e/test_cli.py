@@ -93,6 +93,17 @@ def test_kb_list_shows_files(tmp_path, monkeypatch):
     assert "ssdt.md" in result.output
 
 
+def test_kb_list_shows_subdir_files(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _write_config(tmp_path)
+    kb = tmp_path / "kb"
+    (kb / "windows-kernel").mkdir(parents=True)
+    (kb / "windows-kernel" / "ssdt.md").write_text("## SSDT\nContent here.\n")
+    result = runner.invoke(app, ["kb", "list"])
+    assert result.exit_code == 0
+    assert "ssdt.md" in result.output
+
+
 # --- kb add ---
 
 def test_kb_add_copies_file(tmp_path, monkeypatch):
@@ -112,6 +123,17 @@ def test_kb_add_rejects_non_md(tmp_path, monkeypatch):
     result = runner.invoke(app, ["kb", "add", "file.txt"])
     assert result.exit_code != 0
     assert ".md" in result.output
+
+
+def test_kb_add_with_subdir(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _write_config(tmp_path)
+    (tmp_path / "kb").mkdir()
+    src = tmp_path / "myfile.md"
+    src.write_text("## Topic\nContent.\n")
+    result = runner.invoke(app, ["kb", "add", str(src), "--subdir", "windows-kernel"])
+    assert result.exit_code == 0
+    assert (tmp_path / "kb" / "windows-kernel" / "myfile.md").exists()
 
 
 # --- kb remove ---

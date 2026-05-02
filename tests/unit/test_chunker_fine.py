@@ -50,7 +50,7 @@ def test_chunks_respect_max_size():
         f"**Term C**: {long_text}\n\n"
     )
     chunks = chunk_markdown(md, "test.md")
-    assert all(len(c.text) <= 800 for c in chunks)
+    assert all(len(c.text) <= 1200 for c in chunks)
 
 
 def test_small_sections_not_split():
@@ -64,7 +64,7 @@ def test_paragraph_fallback_when_no_bold_headers():
     md = f"## Big Section\n\n{para}\n\n{para}\n\n{para}\n\n"
     chunks = chunk_markdown(md, "test.md")
     assert len(chunks) >= 2
-    assert all(len(c.text) <= 800 for c in chunks)
+    assert all(len(c.text) <= 1200 for c in chunks)
 
 
 def test_windows_internals_key_concepts_splits():
@@ -78,4 +78,4 @@ def test_windows_internals_key_concepts_splits():
     assert len(key_chunks) >= 5
     ssdt_chunks = [c for c in key_chunks if "SSDT" in c.text or "Syscall" in c.heading]
     assert len(ssdt_chunks) >= 1
-    assert all(len(c.text) <= 800 for c in key_chunks)
+    assert all(len(c.text) <= 1200 for c in key_chunks)

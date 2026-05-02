@@ -86,3 +86,23 @@ def test_non_md_files_ignored(kb, manifest_path):
     (kb / "notes.txt").write_text("ignore me")
     diff = Manifest(manifest_path).diff(kb)
     assert diff.is_empty()
+
+
+def test_diff_detects_subdir_file(kb, manifest_path):
+    subdir = kb / "subcat"
+    subdir.mkdir()
+    (subdir / "nested.md").write_text("nested content")
+    diff = Manifest(manifest_path).diff(kb)
+    assert len(diff.new) == 1
+    assert diff.new[0].name == "nested.md"
+
+
+def test_diff_subdir_file_no_change_after_update(kb, manifest_path):
+    subdir = kb / "subcat"
+    subdir.mkdir()
+    f = subdir / "nested.md"
+    f.write_text("nested content")
+    m = Manifest(manifest_path)
+    m.update(f)
+    diff = m.diff(kb)
+    assert diff.is_empty()

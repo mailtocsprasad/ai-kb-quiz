@@ -196,7 +196,7 @@ def test_explain_refine_prompt_contains_topic():
 def test_explain_stores_refined_chunk_when_embed_and_store_set():
     chunks = [_chunk("SSDT Hooking")]
     retriever = _make_retriever(chunks)
-    refine = MockAdapter(response="refined explanation")
+    refine = MockAdapter(response="refined explanation " + "x" * 200)
     embed_fn = MagicMock(return_value=[0.1, 0.2, 0.3])
     store = _make_store()
     session = LearnSession(
@@ -212,14 +212,32 @@ def test_explain_stores_refined_chunk_when_embed_and_store_set():
     assert metadatas[0]["source_file"] == "generated"
 
 
-def test_explain_skips_store_without_refine_adapter():
+def test_explain_stores_draft_without_refine_adapter():
+    # Storage is decoupled from refining — draft is stored directly when embed_fn+store provided.
     chunks = [_chunk("SSDT Hooking")]
     retriever = _make_retriever(chunks)
     embed_fn = MagicMock(return_value=[0.1])
     store = _make_store()
     session = LearnSession(
         topic="SSDT", retriever=retriever,
-        adapter=MockAdapter(response="draft"),
+        adapter=MockAdapter(response="draft content " + "x" * 200),
+        embed_fn=embed_fn, store=store,
+    )
+    session.explain()
+    store.add.assert_called_once()
+    metadatas = store.add.call_args[1]["metadatas"]
+    assert metadatas[0]["source_file"] == "generated"
+
+
+def test_explain_does_not_store_short_draft():
+    # Drafts under _MIN_STORE_CHARS (model refusals) must not be stored.
+    chunks = [_chunk("SSDT Hooking")]
+    retriever = _make_retriever(chunks)
+    embed_fn = MagicMock(return_value=[0.1])
+    store = _make_store()
+    session = LearnSession(
+        topic="SSDT", retriever=retriever,
+        adapter=MockAdapter(response="too short"),
         embed_fn=embed_fn, store=store,
     )
     session.explain()
@@ -250,7 +268,7 @@ def test_follow_up_uses_refine_adapter():
 def test_follow_up_stores_refined_chunk():
     chunks = [_chunk("SSDT Hooking")]
     retriever = _make_retriever(chunks)
-    refine = MockAdapter(response="refined answer")
+    refine = MockAdapter(response="refined answer " + "x" * 200)
     embed_fn = MagicMock(return_value=[0.1, 0.2])
     store = _make_store()
     session = LearnSession(

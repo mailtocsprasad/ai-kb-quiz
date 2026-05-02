@@ -126,3 +126,22 @@ def test_empty_markdown_file_produces_no_chunks(kb, index_dir):
     make_indexer(kb, index_dir).build_full()
     store = VectorStore(index_dir / "chroma")
     assert store.count() == 3
+
+
+def test_build_full_indexes_subdir_file(kb, index_dir):
+    subdir = kb / "subcat"
+    subdir.mkdir()
+    (subdir / "topic_c.md").write_text(
+        "## Subdir Section\n\nContent from a subdirectory file.\n"
+    )
+    make_indexer(kb, index_dir).build_full()
+    store = VectorStore(index_dir / "chroma")
+    docs = [r["document"] for r in store.query(fake_embed("subdir"), n_results=5)]
+    assert any("Subdir Section" in d or "subdirectory" in d for d in docs)
+
+
+def test_build_full_clears_stale_chunks(kb, index_dir):
+    make_indexer(kb, index_dir).build_full()
+    count_after_first = VectorStore(index_dir / "chroma").count()
+    make_indexer(kb, index_dir).build_full()
+    assert VectorStore(index_dir / "chroma").count() == count_after_first

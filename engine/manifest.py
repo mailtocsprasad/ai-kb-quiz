@@ -28,7 +28,7 @@ class Manifest:
     def diff(self, kb_dir: Path) -> FileDiff:
         current: dict[str, float] = {
             str(p): p.stat().st_mtime
-            for p in sorted(kb_dir.glob("*.md"))
+            for p in sorted(kb_dir.rglob("*.md"))
         }
         new, changed, deleted = [], [], []
         for key, mtime in current.items():

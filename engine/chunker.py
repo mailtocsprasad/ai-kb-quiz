@@ -4,7 +4,8 @@ from engine.question import Chunk
 _HEADING_RE = re.compile(r'^(#{2,3})\s+(.+)$', re.MULTILINE)
 _BOLD_SPLIT_RE = re.compile(r'\n(?=\*\*[^*\n]+\*\*)')
 _BOLD_TERM_RE = re.compile(r'^\*\*([^*]+)\*\*')
-_MAX_CHARS = 800
+_MAX_CHARS = 1200
+_OVERLAP_CHARS = 200  # carry last paragraph into next chunk if it fits within this limit
 
 
 def chunk_markdown(text: str, source_file: str) -> list[Chunk]:
@@ -75,8 +76,11 @@ def _para_split(text: str, heading: str, source_file: str) -> list[Chunk]:
                     source_file=source_file,
                     heading=heading,
                 ))
-                bucket = [part]
-                bucket_len = len(part)
+                # Carry the last paragraph as overlap if it's short enough to
+                # provide context without dominating the next chunk.
+                last = bucket[-1]
+                bucket = [last, part] if len(last) <= _OVERLAP_CHARS else [part]
+                bucket_len = sum(len(p) + 2 for p in bucket)
             else:
                 bucket.append(part)
                 bucket_len += len(part) + 2
